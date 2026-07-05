@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools", "wheel", "toml"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "so101"
+version = "0.1.0"
+description = "SO-101 robot assets and real-robot interfaces for Isaac Lab."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Seongsu Kim" },
+]
+dependencies = [
+    "psutil",
+]
+
+[project.optional-dependencies]
+real = [
+    "draccus",
+    "lerobot",
+    "matplotlib",
+    "numpy",
+    "pynput",
+    "rerun-sdk",
+    "torch",
+]
+
+[project.scripts]
+so101-control = "so101.real.control:main"
+so101-manual-control = "so101.real.manual_control:main"
+so101-calibration-stats = "so101.real.calibration_stats:main"
+so101-check-calibration = "so101.real.check_calibration:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+so101 = ["assets/usd/*.usd", "real/*.json", "real/sample_calibrations/*.json"]
