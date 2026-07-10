@@ -49,7 +49,9 @@ SO101_CFG = ArticulationCfg(
             "Wrist_Roll": -1.6034,
             "Jaw": -0.1465,
         },
-        pos=(-0.05, 0.0, 0.0),
+        # Keep the robot base at the world/environment origin.  Environment
+        # geometry (for example, the tabletop) is positioned relative to it.
+        pos=(0.0, 0.0, 0.0),
         rot=euler_angles_to_quat(np.array([0.0, 0.0, 90.0]), degrees=True),
     ),
     actuators={

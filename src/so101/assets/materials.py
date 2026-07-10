@@ -25,7 +25,9 @@ ROBOT_COLORS: dict[str, tuple[float, float, float]] = {
     "orange": (0.876, 0.317, 0.132),
     "teal": (0.0, 0.8, 0.502),
     "white": (0.95, 0.95, 0.95),
-    "black": (0.08, 0.08, 0.08),
+    # Use true black for the local robot. The previous 0.08 value was a dark
+    # gray and appeared noticeably gray under the scene's strong key light.
+    "black": (0.0, 0.0, 0.0),
 }
 
 DEFAULT_ROBOT_COLOR_NAME = "black"
