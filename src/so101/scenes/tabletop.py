@@ -29,13 +29,20 @@ EXTERNAL_CAMERA_POS = (0.78, -0.62, 0.48)
 EXTERNAL_CAMERA_ROT = (0.7979214, 0.4994660, 0.1790317, 0.2860119)
 
 
-def camera_cfg(prim_path: str, pos: tuple[float, float, float], rot: tuple[float, float, float, float]):
-    """Create a 640x480 RGB-D camera; ``pos`` and ``rot`` use the OpenGL convention."""
+def camera_cfg(
+    prim_path: str,
+    pos: tuple[float, float, float],
+    rot: tuple[float, float, float, float],
+    *,
+    width: int = 640,
+    height: int = 480,
+):
+    """Create an RGB-D camera; ``pos`` and ``rot`` use the OpenGL convention."""
     return CameraCfg(
         prim_path=prim_path,
         update_period=0.0,
-        height=480,
-        width=640,
+        height=height,
+        width=width,
         data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
             projection_type="pinhole",

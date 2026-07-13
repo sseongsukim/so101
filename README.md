@@ -100,25 +100,61 @@ Sim package version; keep those versions aligned for visual environments.
 
 ### Scaled contact-task environments
 
-Three Gymnasium environments build directly on the SO-101 tabletop scene and
+Environment configuration is defined explicitly under `src/so101/configs/`.
+Scripts create configurations through the public helper instead of reading
+private values from `gym.spec()`:
+
+```python
+from so101.configs import make_env_cfg
+
+env_cfg = make_env_cfg("so101-StackCube-v0", num_envs=1, device="cuda:0")
+env = gym.make("so101-StackCube-v0", cfg=env_cfg)
+```
+
+`configs/base.py` contains shared simulation, control, viewer, observation, and
+reward parameters. `configs/tasks.py` contains the task-specific overrides,
+and `configs/registry.py` maps every Gym task ID to its configuration class.
+These use Isaac Lab's dataclass-compatible `@configclass` so nested scene and
+simulation configurations retain `copy`, `replace`, and validation behavior.
+
+Four Gymnasium environments build directly on the SO-101 tabletop scene and
 load only the required Isaac Factory assets. PegInsert and NutThread use the
 original Factory asset scale. GearMesh alone uses 75% scale, with its masses
-scaled by `0.75 ** 3`.
+scaled by `0.75 ** 3`. StackCube uses exact Isaac Lab cuboid primitives: a
+movable 2.5 cm cube and a movable 4 cm target cube.
+
+StackCube randomizes both cube poses on every episode reset. It samples the
+large cube first, then rejection-samples the small cube until their XY centers
+are at least 6 cm apart. Both centers use `x=0.22..0.30 m` and
+`y=-0.10..0.10 m`; each cube receives a random yaw while remaining flat on the
+tabletop.
 
 ```bash
 python scripts/view_task.py --task so101-PegInsert-v0
 python scripts/view_task.py --task so101-GearMesh-v0
 python scripts/view_task.py --task so101-NutThread-v0
+python scripts/view_task.py --task so101-StackCube-v0
 ```
 
-The state-based variants return the same 38-dimensional tensor for the policy
-and critic.  The terms are concatenated in this order:
+PegInsert, GearMesh, and NutThread return a single 38-dimensional `state`
+tensor. The terms are concatenated in this order:
 
 ```text
 joint_pos (6), joint_vel (6), ee_pos_rel_target (3),
 ee_quat_rel_target (4), ee_linvel (3), ee_angvel (3),
 held_pos_rel_target (3), held_quat_rel_target (4), previous_action (6)
 ```
+
+StackCube instead returns the IsaacGym Franka cube-stack common state plus
+SO-101 joint state: cube-A quaternion (4), cube-A position (3), cube-A to
+cube-B position (3), end-effector position (3), end-effector quaternion (4),
+joint position (6), and joint velocity (6), for 29 dimensions.
+
+For StackCube, the EEF position is the midpoint of two explicit distal grasp
+points derived from the SO-101 colliders: one fixed to `/Robot/gripper` and one
+fixed to `/Robot/jaw`. The EEF quaternion remains the `/Robot/gripper`
+orientation. The other assembly tasks retain the Workshop-compatible
+`/Robot/gripper` body-origin EEF.
 
 The final element of `joint_pos` is the measured SO-101 Jaw angle and the final
 element of `previous_action` is its preceding absolute target.  Position errors
@@ -132,7 +168,7 @@ Success is reported in the step info as `success` (per environment) and
 `successes` (mean), but does not terminate the episode; time limits produce
 truncation.
 
-The dense reward is split into three ordered phases. Phase 0 has no orientation
+The shared task dense reward is split into three ordered phases. Phase 0 has no orientation
 objective. It rewards reaching the held frame, contact between `/Robot/jaw` and
 `/HeldAsset`, and upward motion while that contact is present:
 
@@ -159,22 +195,33 @@ and successful lifted placement occupies `[3, 4]`. Step info exposes the phase,
 filtered contact force, lift height, reach distance, held-target distance, and
 the individual reward terms.
 
+StackCube uses the IsaacGym Franka cube-stack reward instead: distance `0.1`,
+lift `1.5`, alignment `2.0`, and exclusive stack-success reward `16.0`. Stack
+success requires cube-center XY error below 1 cm, height error below 0.5 cm,
+and the end effector to be more than 2 cm from the small cube. Its distance
+gain is doubled to 20 and its lift-clearance threshold is reduced to 2 cm to
+match cubes half the size of the Franka example. Success sets
+`terminated=True`; the 350-step (approximately 11.67-second) time limit sets
+`truncated=True` when success has not occurred.
+
 Visual variants use the same task geometry and additionally return two camera
-images plus robot proprioception:
+images alongside the same task state:
 
 ```bash
 python scripts/view_task.py --task so101-visual-PegInsert-v0
 python scripts/view_task.py --task so101-visual-GearMesh-v0
 python scripts/view_task.py --task so101-visual-NutThread-v0
+python scripts/view_task.py --task so101-visual-StackCube-v0
 ```
 
-Their policy observation is a dictionary:
+Their observation is a flat dictionary. StackCube state has 29 dimensions;
+the other task states have 38:
 
 ```python
 {
-    "proprio": float_tensor,       # (num_envs, 12), joint position + velocity
-    "rgb_wrist": float_tensor,     # (num_envs, 480, 640, 3), range [0, 1]
-    "rgb_external": float_tensor,  # (num_envs, 480, 640, 3), range [0, 1]
+    "state": float_tensor,        # (num_envs, 29 or 38)
+    "wrist_image": float_tensor,  # (num_envs, 480, 640, 3), range [0, 1]
+    "front_image": float_tensor,  # (num_envs, 480, 640, 3), range [0, 1]
 }
 ```
 
@@ -191,9 +238,10 @@ lerobot-calibrate --teleop.type=so101_leader \
 python scripts/teleop_task.py so101-PegInsert-v0 --port /dev/ttyACM0
 python scripts/teleop_task.py --task_name so101-GearMesh-v0 --robot-id leader_arm_1
 python scripts/teleop_task.py so101-NutThread-v0 --print-every 1
+python scripts/teleop_task.py so101-StackCube-v0 --print-every 1
 ```
 
-The default control-rate cap is 60 Hz and diagnostics are printed every 30
+The default control-rate cap is 30 Hz and diagnostics are printed every 30
 steps. Each line reports total reward, reward phase, geometric and
 lift-qualified success, filtered jaw-to-held contact force, lift height, and
 reach/target distances. Set `--print-every 1` to inspect every environment

@@ -11,155 +11,26 @@ from collections.abc import Sequence
 
 import torch
 
-from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
-from isaaclab.sim import PhysxCfg, SimulationCfg
-from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
-from isaaclab.utils import configclass
+from isaaclab.envs import DirectRLEnv
 from isaaclab.utils import math as math_utils
 
-from .assets import FACTORY_ASSET_SCALE
-from .scenes import (
-    SO101GearMeshSceneCfg,
-    SO101NutThreadSceneCfg,
-    SO101PegInsertSceneCfg,
-    SO101VisualGearMeshSceneCfg,
-    SO101VisualNutThreadSceneCfg,
-    SO101VisualPegInsertSceneCfg,
-)
+from so101.configs.base import SO101TaskEnvCfg, SO101VisualTaskEnvCfg
+
+from .assets import LARGE_CUBE_SIZE, SMALL_CUBE_SIZE
+
+# Distal grasp points measured from the composed SO-101 collider geometry.
+# The fixed finger is part of the gripper rigid body; the moving finger is the
+# jaw rigid body. Their midpoint is the task-space grasp EEF used by StackCube.
+FIXED_FINGERTIP_OFFSET = (0.0, 0.0, -0.090)
+MOVING_FINGERTIP_OFFSET = (0.0, -0.070, 0.0189)
 
 
-@configclass
-class SO101FactoryEnvCfg(DirectRLEnvCfg):
-    """Common configuration for the three SO-101 Factory-inspired tasks."""
-
-    decimation = 2
-    episode_length_s = 10.0
-    action_space = 6
-    observation_space = 38
-    state_space = 38
-
-    # Task-frame definitions. Offsets are expressed in the corresponding USD
-    # asset's local frame and transformed into world coordinates at runtime.
-    task_name: str = "peg_insert"
-    held_base_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    target_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
-
-    # Isaac Factory success criteria, expressed in meters after asset scaling.
-    success_xy_threshold: float = 0.0025
-    success_height_threshold: float = 0.025 * 0.04
-    check_success_rotation: bool = False
-    ee_success_yaw: float = 0.0
-
-    # Three reward phases: approach/grasp, move the lifted asset, and success.
-    reach_reward_std: float = 0.05
-    reach_reward_weight: float = 0.5
-    contact_reward_weight: float = 0.25
-    lift_progress_reward_weight: float = 0.25
-    contact_force_threshold: float = 0.1
-    lift_height_threshold: float = 0.01
-    lifted_bonus: float = 1.0
-    success_bonus: float = 2.0
-
-    # Multi-scale held-to-target reward, enabled only after a valid lift.
-    distance_reward_coarse_std: float = 0.05
-    distance_reward_fine_std: float = 0.005
-    distance_reward_coarse_weight: float = 0.5
-    distance_reward_fine_weight: float = 0.5
-
-    scene = SO101PegInsertSceneCfg(num_envs=1, env_spacing=1.0, clone_in_fabric=False)
-    sim = SimulationCfg(
-        dt=1.0 / 120.0,
-        render_interval=decimation,
-        physx=PhysxCfg(
-            solver_type=1,
-            max_position_iteration_count=64,
-            max_velocity_iteration_count=1,
-            bounce_threshold_velocity=0.2,
-            friction_offset_threshold=0.01,
-            friction_correlation_distance=0.004,
-        ),
-        physics_material=RigidBodyMaterialCfg(static_friction=1.0, dynamic_friction=0.8),
-    )
-
-    def __post_init__(self) -> None:
-        self.viewer.eye = (0.82, -0.68, 0.50)
-        self.viewer.lookat = (0.27, 0.0, 0.10)
-
-
-@configclass
-class SO101PegInsertEnvCfg(SO101FactoryEnvCfg):
-    scene = SO101PegInsertSceneCfg(num_envs=1, env_spacing=1.0, clone_in_fabric=False)
-    episode_length_s = 10.0
-
-
-@configclass
-class SO101GearMeshEnvCfg(SO101FactoryEnvCfg):
-    scene = SO101GearMeshSceneCfg(num_envs=1, env_spacing=1.0, clone_in_fabric=False)
-    episode_length_s = 20.0
-    task_name = "gear_mesh"
-    held_base_offset = (0.02025 * FACTORY_ASSET_SCALE, 0.0, 0.0)
-    target_offset = held_base_offset
-    success_xy_threshold = 0.0025 * FACTORY_ASSET_SCALE
-    success_height_threshold = 0.020 * FACTORY_ASSET_SCALE * 0.05
-
-
-@configclass
-class SO101NutThreadEnvCfg(SO101FactoryEnvCfg):
-    scene = SO101NutThreadSceneCfg(num_envs=1, env_spacing=1.0, clone_in_fabric=False)
-    episode_length_s = 30.0
-    task_name = "nut_thread"
-    held_base_offset = (0.0, 0.0, 0.010)
-    target_offset = (0.0, 0.0, 0.010 + 0.025 - 0.002 * 1.5)
-    success_height_threshold = 0.002 * 0.375
-    check_success_rotation = True
-
-
-@configclass
-class SO101VisualFactoryEnvCfg(SO101FactoryEnvCfg):
-    """Visual-policy space: proprioception plus both RGB camera streams."""
-
-    observation_space = {
-        "proprio": 12,
-        "rgb_wrist": [480, 640, 3],
-        "rgb_external": [480, 640, 3],
-    }
-    state_space = 0
-
-
-@configclass
-class SO101VisualPegInsertEnvCfg(SO101VisualFactoryEnvCfg):
-    scene = SO101VisualPegInsertSceneCfg(num_envs=1, env_spacing=1.0, clone_in_fabric=False)
-    episode_length_s = 10.0
-
-
-@configclass
-class SO101VisualGearMeshEnvCfg(SO101VisualFactoryEnvCfg):
-    scene = SO101VisualGearMeshSceneCfg(num_envs=1, env_spacing=1.0, clone_in_fabric=False)
-    episode_length_s = 20.0
-    task_name = "gear_mesh"
-    held_base_offset = (0.02025 * FACTORY_ASSET_SCALE, 0.0, 0.0)
-    target_offset = held_base_offset
-    success_xy_threshold = 0.0025 * FACTORY_ASSET_SCALE
-    success_height_threshold = 0.020 * FACTORY_ASSET_SCALE * 0.05
-
-
-@configclass
-class SO101VisualNutThreadEnvCfg(SO101VisualFactoryEnvCfg):
-    scene = SO101VisualNutThreadSceneCfg(num_envs=1, env_spacing=1.0, clone_in_fabric=False)
-    episode_length_s = 30.0
-    task_name = "nut_thread"
-    held_base_offset = (0.0, 0.0, 0.010)
-    target_offset = (0.0, 0.0, 0.010 + 0.025 - 0.002 * 1.5)
-    success_height_threshold = 0.002 * 0.375
-    check_success_rotation = True
-
-
-class SO101FactoryEnv(DirectRLEnv):
+class SO101TaskEnv(DirectRLEnv):
     """Joint-position SO-101 environment with task-centric state observations."""
 
-    cfg: SO101FactoryEnvCfg
+    cfg: SO101TaskEnvCfg
 
-    def __init__(self, cfg: SO101FactoryEnvCfg, render_mode: str | None = None, **kwargs):
+    def __init__(self, cfg: SO101TaskEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
         self.robot = self.scene["robot"]
         self.fixed_asset = self.scene["fixed_asset"]
@@ -172,6 +43,19 @@ class SO101FactoryEnv(DirectRLEnv):
                 f"found {ee_body_names}."
             )
         self._ee_body_idx = ee_body_ids[0]
+        jaw_body_ids, jaw_body_names = self.robot.find_bodies("jaw")
+        if len(jaw_body_ids) != 1:
+            raise RuntimeError(
+                "Expected exactly one SO-101 moving gripper body named 'jaw', "
+                f"found {jaw_body_names}."
+            )
+        self._jaw_body_idx = jaw_body_ids[0]
+        self._fixed_fingertip_offset = torch.tensor(
+            FIXED_FINGERTIP_OFFSET, dtype=torch.float32, device=self.device
+        ).unsqueeze(0)
+        self._moving_fingertip_offset = torch.tensor(
+            MOVING_FINGERTIP_OFFSET, dtype=torch.float32, device=self.device
+        ).unsqueeze(0)
         self._held_base_offset = torch.tensor(
             cfg.held_base_offset, dtype=torch.float32, device=self.device
         ).unsqueeze(0)
@@ -181,6 +65,10 @@ class SO101FactoryEnv(DirectRLEnv):
         self._joint_targets = self.robot.data.default_joint_pos.clone()
         self._successes = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._has_lifted = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        # DirectRLEnv calls _get_dones() immediately before _get_rewards().
+        # Cache StackCube metrics only across those two hooks to avoid computing
+        # the same fingertip transforms, norms, and tanh terms twice per step.
+        self._step_stack_cube_metrics: dict[str, torch.Tensor] | None = None
         self._held_initial_root_z = (
             self.held_asset.data.default_root_state[:, 2] + self.scene.env_origins[:, 2]
         ).clone()
@@ -205,7 +93,7 @@ class SO101FactoryEnv(DirectRLEnv):
     @staticmethod
     def _relative_quat(target_quat: torch.Tensor, current_quat: torch.Tensor) -> torch.Tensor:
         relative = math_utils.quat_mul(math_utils.quat_conjugate(target_quat), current_quat)
-        return SO101FactoryEnv._canonicalize_quat(relative)
+        return SO101TaskEnv._canonicalize_quat(relative)
 
     @staticmethod
     def _apply_local_offset(
@@ -251,15 +139,59 @@ class SO101FactoryEnv(DirectRLEnv):
         }
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
+        if self.cfg.task_name == "stack_cube":
+            cube_a_pos = self.held_asset.data.root_pos_w
+            cube_a_quat = self.held_asset.data.root_quat_w
+            cube_b_pos = self.fixed_asset.data.root_pos_w
+            ee_pos, _, _ = self._get_grasp_points()
+            ee_quat = self.robot.data.body_quat_w[:, self._ee_body_idx]
+            state = torch.cat(
+                (
+                    cube_a_quat,
+                    cube_a_pos,
+                    cube_b_pos - cube_a_pos,
+                    ee_pos,
+                    ee_quat,
+                    self.robot.data.joint_pos,
+                    self.robot.data.joint_vel,
+                ),
+                dim=-1,
+            )
+            return {"state": state}
+
         state_dict = self._get_state_dict()
         state = torch.cat(tuple(state_dict.values()), dim=-1)
-        return {"policy": state, "critic": state}
+        return {"state": state}
+
+    def _get_grasp_points(
+        self,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return grasp midpoint, fixed fingertip, and moving fingertip in world frame."""
+        fixed_body_pos = self.robot.data.body_pos_w[:, self._ee_body_idx]
+        fixed_body_quat = self.robot.data.body_quat_w[:, self._ee_body_idx]
+        moving_body_pos = self.robot.data.body_pos_w[:, self._jaw_body_idx]
+        moving_body_quat = self.robot.data.body_quat_w[:, self._jaw_body_idx]
+        fixed_offset = self._fixed_fingertip_offset.expand(self.num_envs, -1)
+        moving_offset = self._moving_fingertip_offset.expand(self.num_envs, -1)
+        fixed_fingertip = fixed_body_pos + math_utils.quat_apply(
+            fixed_body_quat, fixed_offset
+        )
+        moving_fingertip = moving_body_pos + math_utils.quat_apply(
+            moving_body_quat, moving_offset
+        )
+        grasp_midpoint = 0.5 * (fixed_fingertip + moving_fingertip)
+        return grasp_midpoint, fixed_fingertip, moving_fingertip
 
     def _get_successes(self) -> torch.Tensor:
         """Evaluate Isaac Factory-style task success without ending the episode."""
+        if self.cfg.task_name == "stack_cube":
+            return self._get_stack_cube_metrics()["stack_success"]
+
         held_pos, _, target_pos, _ = self._get_task_frames()
         xy_dist = torch.linalg.vector_norm(held_pos[:, :2] - target_pos[:, :2], dim=-1)
         z_disp = held_pos[:, 2] - target_pos[:, 2]
+        if self.cfg.check_success_height_absolute:
+            z_disp = torch.abs(z_disp)
         successes = torch.logical_and(
             xy_dist < self.cfg.success_xy_threshold,
             z_disp < self.cfg.success_height_threshold,
@@ -279,7 +211,85 @@ class SO101FactoryEnv(DirectRLEnv):
 
         return successes
 
+    def _get_stack_cube_metrics(self) -> dict[str, torch.Tensor]:
+        """Compute the geometric terms used by the IsaacGym Franka stack task."""
+        cube_a_pos = self.held_asset.data.root_pos_w
+        cube_b_pos = self.fixed_asset.data.root_pos_w
+        ee_pos, fixed_finger_pos, moving_finger_pos = self._get_grasp_points()
+
+        d = torch.linalg.vector_norm(cube_a_pos - ee_pos, dim=-1)
+        d_lf = torch.linalg.vector_norm(cube_a_pos - fixed_finger_pos, dim=-1)
+        d_rf = torch.linalg.vector_norm(cube_a_pos - moving_finger_pos, dim=-1)
+        dist_reward = 1.0 - torch.tanh(
+            self.cfg.stack_distance_gain * (d + d_lf + d_rf) / 3.0
+        )
+
+        cube_a_size = SMALL_CUBE_SIZE
+        cube_b_size = LARGE_CUBE_SIZE
+        table_height = self._held_initial_root_z - cube_a_size / 2.0
+        cube_a_height = cube_a_pos[:, 2] - table_height
+        cube_a_lifted = (
+            cube_a_height - cube_a_size
+        ) > self.cfg.stack_lift_clearance
+
+        cube_a_to_cube_b = cube_b_pos - cube_a_pos
+        target_offset = torch.zeros_like(cube_a_to_cube_b)
+        target_offset[:, 2] = (cube_a_size + cube_b_size) / 2.0
+        d_ab = torch.linalg.vector_norm(cube_a_to_cube_b + target_offset, dim=-1)
+        align_reward = (
+            1.0 - torch.tanh(self.cfg.stack_distance_gain * d_ab)
+        ) * cube_a_lifted.float()
+        dist_reward = torch.maximum(dist_reward, align_reward)
+
+        target_height = cube_b_size + cube_a_size / 2.0
+        cube_a_align_cube_b = (
+            torch.linalg.vector_norm(cube_a_to_cube_b[:, :2], dim=-1)
+            < self.cfg.success_xy_threshold
+        )
+        cube_a_on_cube_b = (
+            torch.abs(cube_a_height - target_height)
+            < self.cfg.success_height_threshold
+        )
+        gripper_away_from_cube_a = d > self.cfg.stack_gripper_away_threshold
+        stack_success = torch.logical_and(
+            torch.logical_and(cube_a_align_cube_b, cube_a_on_cube_b),
+            gripper_away_from_cube_a,
+        )
+        return {
+            "dist_reward": dist_reward,
+            "lift_reward": cube_a_lifted.float(),
+            "align_reward": align_reward,
+            "stack_success": stack_success,
+            "eef_cube_distance": d,
+            "cube_target_distance": d_ab,
+        }
+
     def _get_rewards(self) -> torch.Tensor:
+        if self.cfg.task_name == "stack_cube":
+            metrics = self._step_stack_cube_metrics
+            if metrics is None:
+                # Keep direct/manual calls to this hook correct outside the
+                # standard DirectRLEnv.step() call order.
+                metrics = self._get_stack_cube_metrics()
+            self._step_stack_cube_metrics = None
+            shaped_reward = (
+                0.1 * metrics["dist_reward"]
+                + 1.5 * metrics["lift_reward"]
+                + 2.0 * metrics["align_reward"]
+            )
+            reward = torch.where(
+                metrics["stack_success"],
+                16.0 * metrics["stack_success"].float(),
+                shaped_reward,
+            )
+            self.extras["reward_distance"] = metrics["dist_reward"]
+            self.extras["reward_lift"] = metrics["lift_reward"]
+            self.extras["reward_align"] = metrics["align_reward"]
+            self.extras["reward_success"] = metrics["stack_success"].float()
+            self.extras["reach_distance"] = metrics["eef_cube_distance"]
+            self.extras["held_target_distance"] = metrics["cube_target_distance"]
+            return reward
+
         held_pos, _, target_pos, _ = self._get_task_frames()
         ee_pos = self.robot.data.body_pos_w[:, self._ee_body_idx]
 
@@ -352,11 +362,23 @@ class SO101FactoryEnv(DirectRLEnv):
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        self._successes = self._get_successes()
+        if self.cfg.task_name == "stack_cube":
+            self._step_stack_cube_metrics = self._get_stack_cube_metrics()
+            self._successes = self._step_stack_cube_metrics["stack_success"]
+        else:
+            self._successes = self._get_successes()
         self.extras["success"] = self._successes
         self.extras["successes"] = self._successes.float().mean()
-        terminated = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        terminated = (
+            self._successes
+            if self.cfg.task_name == "stack_cube"
+            else torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        )
         time_out = self.episode_length_buf >= self.max_episode_length - 1
+        # Prefer task termination when success occurs on the final allowed
+        # step. This keeps terminal and time-limit transitions unambiguous for
+        # both on-policy rollouts and off-policy replay buffers.
+        time_out = torch.logical_and(time_out, torch.logical_not(terminated))
         return terminated, time_out
 
     def _reset_idx(self, env_ids: Sequence[int]) -> None:
@@ -368,8 +390,53 @@ class SO101FactoryEnv(DirectRLEnv):
         self.robot.set_joint_position_target(joint_pos, env_ids=env_ids)
 
         held_initial_root_z = None
+        num_reset_envs = len(env_ids)
+        fixed_xy = None
+        held_xy = None
+        if self.cfg.randomize_asset_poses:
+            x_min, x_max = self.cfg.asset_spawn_x_range
+            y_min, y_max = self.cfg.asset_spawn_y_range
+            fixed_xy = torch.empty((num_reset_envs, 2), device=self.device)
+            fixed_xy[:, 0].uniform_(x_min, x_max)
+            fixed_xy[:, 1].uniform_(y_min, y_max)
+
+            held_xy = torch.empty_like(fixed_xy)
+            held_xy[:, 0].uniform_(x_min, x_max)
+            held_xy[:, 1].uniform_(y_min, y_max)
+            for _ in range(self.cfg.asset_spawn_max_attempts):
+                too_close = (
+                    torch.linalg.vector_norm(held_xy - fixed_xy, dim=-1)
+                    < self.cfg.asset_spawn_min_separation
+                )
+                if not torch.any(too_close):
+                    break
+                num_resamples = int(too_close.sum().item())
+                held_xy[too_close, 0] = torch.empty(
+                    num_resamples, device=self.device
+                ).uniform_(x_min, x_max)
+                held_xy[too_close, 1] = torch.empty(
+                    num_resamples, device=self.device
+                ).uniform_(y_min, y_max)
+            else:
+                raise RuntimeError(
+                    "Could not sample separated tabletop asset poses within "
+                    f"{self.cfg.asset_spawn_max_attempts} attempts."
+                )
         for asset in (self.fixed_asset, self.held_asset):
             root_state = asset.data.default_root_state[env_ids].clone()
+            if self.cfg.randomize_asset_poses:
+                sampled_xy = held_xy if asset is self.held_asset else fixed_xy
+                if sampled_xy is None:
+                    raise RuntimeError("Randomized asset poses were not initialized.")
+                root_state[:, :2] = sampled_xy
+
+                # Keep each cube flat on the table and randomize only its yaw.
+                yaw = torch.empty(num_reset_envs, device=self.device).uniform_(
+                    -torch.pi, torch.pi
+                )
+                root_state[:, 3] = torch.cos(yaw * 0.5)
+                root_state[:, 4:6] = 0.0
+                root_state[:, 6] = torch.sin(yaw * 0.5)
             root_state[:, :3] += self.scene.env_origins[env_ids]
             asset.write_root_pose_to_sim(root_state[:, :7], env_ids=env_ids)
             asset.write_root_velocity_to_sim(root_state[:, 7:], env_ids=env_ids)
@@ -381,29 +448,28 @@ class SO101FactoryEnv(DirectRLEnv):
         self.actions[env_ids] = joint_pos
         self._successes[env_ids] = False
         self._has_lifted[env_ids] = False
+        self._step_stack_cube_metrics = None
         if held_initial_root_z is None:
             raise RuntimeError("Held asset reset state was not initialized.")
         self._held_initial_root_z[env_ids] = held_initial_root_z
 
 
-class SO101FactoryVisualEnv(SO101FactoryEnv):
-    """Visual variant exposing proprioception and two normalized RGB images."""
+class SO101TaskVisualEnv(SO101TaskEnv):
+    """Visual variant exposing task state and two normalized RGB images."""
 
-    cfg: SO101VisualFactoryEnvCfg
+    cfg: SO101VisualTaskEnvCfg
 
-    def __init__(self, cfg: SO101VisualFactoryEnvCfg, render_mode: str | None = None, **kwargs):
+    def __init__(self, cfg: SO101VisualTaskEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
         self.wrist_camera = self.scene["wrist_camera"]
         self.external_camera = self.scene["external_camera"]
 
-    def _get_observations(self) -> dict[str, dict[str, torch.Tensor]]:
-        proprio = torch.cat((self.robot.data.joint_pos, self.robot.data.joint_vel), dim=-1)
+    def _get_observations(self) -> dict[str, torch.Tensor]:
+        state = SO101TaskEnv._get_observations(self)["state"]
         wrist_rgb = self.wrist_camera.data.output["rgb"].to(dtype=torch.float32) / 255.0
         external_rgb = self.external_camera.data.output["rgb"].to(dtype=torch.float32) / 255.0
         return {
-            "policy": {
-                "proprio": proprio,
-                "rgb_wrist": wrist_rgb,
-                "rgb_external": external_rgb,
-            }
+            "state": state,
+            "wrist_image": wrist_rgb,
+            "front_image": external_rgb,
         }

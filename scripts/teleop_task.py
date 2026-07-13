@@ -19,9 +19,11 @@ TASK_NAMES = (
     "so101-PegInsert-v0",
     "so101-GearMesh-v0",
     "so101-NutThread-v0",
+    "so101-StackCube-v0",
     "so101-visual-PegInsert-v0",
     "so101-visual-GearMesh-v0",
     "so101-visual-NutThread-v0",
+    "so101-visual-StackCube-v0",
 )
 
 parser = argparse.ArgumentParser(
@@ -60,8 +62,8 @@ parser.add_argument(
 parser.add_argument(
     "--rate",
     type=float,
-    default=60.0,
-    help="Maximum wall-clock control rate in Hz; 0 disables pacing (default: 60).",
+    default=30.0,
+    help="Maximum wall-clock control rate in Hz; 0 disables pacing (default: 30).",
 )
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -82,6 +84,7 @@ import gymnasium as gym  # noqa: E402
 import torch  # noqa: E402
 
 import so101.tasks  # noqa: E402,F401  (registers environments)
+from so101.configs import make_env_cfg  # noqa: E402
 from so101.real.interface import LeRobotSO101Interface  # noqa: E402
 
 
@@ -123,10 +126,7 @@ def _print_diagnostics(step: int, reward: torch.Tensor, info: dict[str, Any]) ->
 
 
 def main() -> None:
-    cfg_entry = gym.spec(selected_task).kwargs["env_cfg_entry_point"]
-    env_cfg = cfg_entry()
-    env_cfg.scene.num_envs = 1
-    env_cfg.sim.device = args_cli.device
+    env_cfg = make_env_cfg(selected_task, num_envs=1, device=args_cli.device)
 
     env = gym.make(selected_task, cfg=env_cfg, render_mode=None)
     leader = LeRobotSO101Interface(
