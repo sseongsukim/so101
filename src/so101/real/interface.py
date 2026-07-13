@@ -41,6 +41,12 @@ from lerobot.utils.utils import get_safe_torch_device
 from lerobot.policies.utils import make_robot_action
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
+try:
+    # LeRobot >= 0.4 separates physical teleoperators from robot devices.
+    from lerobot.teleoperators import make_teleoperator_from_config
+except ImportError:  # pragma: no cover - compatibility with the workshop version
+    make_teleoperator_from_config = None
+
 from .constants import SO101_JOINT_ORDER as _SO101_JOINT_ORDER
 from .constants import SO101_USD_MAPPING as _SO101_USD_MAPPING
 
@@ -104,7 +110,13 @@ class LeRobotSO101Interface:
 
     def make_cfg(self):
         if self.kind == "leader":
-            return SO101LeaderConfig(port=self.port, id=self.id)
+            try:
+                # LeRobot >= 0.4 defaults body joints to degrees, while the
+                # workshop mapping below expects calibrated [-100, 100]
+                # values (and [0, 100] for the gripper).
+                return SO101LeaderConfig(port=self.port, id=self.id, use_degrees=False)
+            except TypeError:
+                return SO101LeaderConfig(port=self.port, id=self.id)
         elif self.kind == "follower":
             cameras = self.make_cameras_cfg()
             return SO101FollowerConfig(port=self.port, id=self.id, cameras=cameras)
@@ -112,13 +124,18 @@ class LeRobotSO101Interface:
 
     def init_device(self, visualize: bool = False):
         self.cfg = self.make_cfg()
-        self.robot = make_robot_from_config(self.cfg)
+        if self.kind == "leader" and make_teleoperator_from_config is not None:
+            self.robot = make_teleoperator_from_config(self.cfg)
+        else:
+            # The workshop LeRobot revision routed both leader and follower
+            # configs through this factory. Keep it as the legacy fallback.
+            self.robot = make_robot_from_config(self.cfg)
 
         random_session_name = f"eval_{uuid.uuid4().hex[:8]}"
         if visualize:
             init_rerun(session_name=random_session_name)
 
-        print(f"[INFO]: Connected to the Arm at {self.port} with id {self.id}")
+        print(f"[INFO]: Initialized the Arm at {self.port} with id {self.id}")
 
     def connect(self):
         self.robot.connect()

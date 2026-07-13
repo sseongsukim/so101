@@ -32,8 +32,8 @@ def factory_asset_cfg(
     """Build a scaled Factory articulation without importing its Franka environment.
 
     Mass is scaled by ``scale**3`` to preserve the original material density.
-    Fixed fixtures have a fixed root. Held assets remain movable, but gravity is
-    disabled for their initial inspection pose until grasp/reset logic moves them.
+    Fixed fixtures have a fixed root. Held assets remain movable and are always
+    affected by gravity so they must be physically supported or grasped.
     """
     return ArticulationCfg(
         prim_path=prim_path,
@@ -42,7 +42,7 @@ def factory_asset_cfg(
             scale=(scale, scale, scale),
             activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=True,
+                disable_gravity=False,
                 max_depenetration_velocity=2.0,
                 solver_position_iteration_count=64,
                 solver_velocity_iteration_count=1,

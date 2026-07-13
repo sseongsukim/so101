@@ -6,8 +6,8 @@ This repository intentionally does not copy the workshop task/environment. It
 keeps only the parts that are useful when building a custom Isaac Lab scene:
 
 - `so101.assets.SO101_CFG`: Isaac Lab `ArticulationCfg` using the SO-101 USD.
-  The printed robot body is set to black by default to match the local real
-  robot.
+  The printed robot body is black and the wrist-camera assembly is mounted on
+  the right side to match the local real robot.
 - `so101.assets.SO101_NO_CAMERA_CFG`: the same robot without the camera mesh.
 - `so101.real.interface.LeRobotSO101Interface`: LeRobot bridge utilities for
   mapping real SO-101 joint values to Isaac Lab radians and back.
@@ -83,6 +83,14 @@ env_cfg.scene.external_camera.offset.pos = (x, y, z)
 env_cfg.scene.external_camera.offset.rot = (w, x, y, z)
 ```
 
+The workshop's original left-camera USD remains unchanged as
+`SO-ARM101-USD.usd`. `SO101_CFG` uses
+`SO-ARM101-USD-RIGHT-CAMERA.usd`, a non-destructive overlay that mirrors the
+camera visual mesh and camera-mount collider to the physical robot's right
+side. Its translation, orientation, and local geometry scale together form an
+exact reflection across the gripper's center plane; changing only translation
+would place the asymmetric mount inside the gripper.
+
 State environments do not spawn either camera. Visual environments spawn both
 and expose normalized RGB images in the policy observation.
 
@@ -103,6 +111,54 @@ python scripts/view_task.py --task so101-GearMesh-v0
 python scripts/view_task.py --task so101-NutThread-v0
 ```
 
+The state-based variants return the same 38-dimensional tensor for the policy
+and critic.  The terms are concatenated in this order:
+
+```text
+joint_pos (6), joint_vel (6), ee_pos_rel_target (3),
+ee_quat_rel_target (4), ee_linvel (3), ee_angvel (3),
+held_pos_rel_target (3), held_quat_rel_target (4), previous_action (6)
+```
+
+The final element of `joint_pos` is the measured SO-101 Jaw angle and the final
+element of `previous_action` is its preceding absolute target.  Position errors
+are represented in the global frame.  GearMesh computes the medium-shaft target
+from the scaled local offset and the gear-base pose.
+
+Success follows the Isaac Factory geometric checks: the held assembly frame
+must be centered within the task's XY tolerance and below its insertion/thread
+height threshold. NutThread additionally checks the end-effector yaw progress.
+Success is reported in the step info as `success` (per environment) and
+`successes` (mean), but does not terminate the episode; time limits produce
+truncation.
+
+The dense reward is split into three ordered phases. Phase 0 has no orientation
+objective. It rewards reaching the held frame, contact between `/Robot/jaw` and
+`/HeldAsset`, and upward motion while that contact is present:
+
+```text
+r0 = 0.5 exp(-0.5 (d_reach / 0.05)^2)
+   + 0.25 contact
+   + 0.25 contact clamp(lift_height / 0.01, 0, 1)
+```
+
+A valid lift requires at least 0.1 N of filtered jaw contact and a 1 cm rise
+from that environment's reset height. Once achieved, the lifted state is
+latched for the rest of the episode and Phase 1 applies the task-frame target
+reward:
+
+```text
+r1 = 1.0
+   + 0.5 exp(-0.5 (d_target / 0.05)^2)
+   + 0.5 exp(-0.5 (d_target / 0.005)^2)
+```
+
+Phase 2 adds `2.0` when the task-specific geometric success condition is met
+after a valid lift. Thus Phase 0 occupies `[0, 1]`, Phase 1 occupies `[1, 2]`,
+and successful lifted placement occupies `[3, 4]`. Step info exposes the phase,
+filtered contact force, lift height, reach distance, held-target distance, and
+the individual reward terms.
+
 Visual variants use the same task geometry and additionally return two camera
 images plus robot proprioception:
 
@@ -122,11 +178,34 @@ Their policy observation is a dictionary:
 }
 ```
 
-The environment action is a normalized six-dimensional SO-101 joint-position
-offset. The current implementation supplies task geometry, physics, cameras,
-joint observations/actions, default-pose reset behavior, and a basic
-asset-proximity reward. SO-101-specific in-gripper reset initialization and
-final insertion/meshing/threading reward shaping are the next layer; the Franka
+### Leader-arm task teleoperation
+
+A calibrated physical SO-101 leader arm can directly command any task's six
+absolute simulation joint targets. Install the real-robot dependencies, connect
+the leader over USB, and pass either a state or visual task name:
+
+```bash
+lerobot-calibrate --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM0 --teleop.id=leader_arm_1
+
+python scripts/teleop_task.py so101-PegInsert-v0 --port /dev/ttyACM0
+python scripts/teleop_task.py --task_name so101-GearMesh-v0 --robot-id leader_arm_1
+python scripts/teleop_task.py so101-NutThread-v0 --print-every 1
+```
+
+The default control-rate cap is 60 Hz and diagnostics are printed every 30
+steps. Each line reports total reward, reward phase, geometric and
+lift-qualified success, filtered jaw-to-held contact force, lift height, and
+reach/target distances. Set `--print-every 1` to inspect every environment
+step, or `--rate 0` to disable wall-clock pacing. `TELEOP_PORT` and `TELEOP_ID`
+can be used instead of the corresponding command-line options.
+
+The environment action is a six-dimensional absolute SO-101 joint-position
+target in radians, matching the Sim-to-Real SO-101 Workshop. The current
+implementation supplies task geometry, physics, cameras, joint
+observations/actions, default-pose reset behavior, jaw-filtered contact sensing,
+and phase-based reach/lift/placement rewards. More task-specific insertion,
+meshing, and threading shaping can be layered on this shared reward; the Franka
 reset cannot be reused because its fingertip frame, gripper, and 7-DoF IK differ.
 
 The workshop changes the robot color by editing the USD shader at

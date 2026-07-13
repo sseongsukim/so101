@@ -1,0 +1,186 @@
+"""Drive an SO-101 simulation task with a physical SO-101 leader arm.
+
+Examples:
+
+    python scripts/teleop_task.py so101-PegInsert-v0 --port /dev/ttyACM0
+    python scripts/teleop_task.py --task so101-GearMesh-v0 --print-every 1
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import time
+from typing import Any
+
+from isaaclab.app import AppLauncher
+
+TASK_NAMES = (
+    "so101-PegInsert-v0",
+    "so101-GearMesh-v0",
+    "so101-NutThread-v0",
+    "so101-visual-PegInsert-v0",
+    "so101-visual-GearMesh-v0",
+    "so101-visual-NutThread-v0",
+)
+
+parser = argparse.ArgumentParser(
+    description="Teleoperate an SO-101 task with a physical SO-101 leader arm."
+)
+parser.add_argument(
+    "task_name",
+    nargs="?",
+    choices=TASK_NAMES,
+    help="Registered SO-101 environment name.",
+)
+parser.add_argument(
+    "--task",
+    "--task-name",
+    "--task_name",
+    dest="task_option",
+    choices=TASK_NAMES,
+    help="Registered SO-101 environment name (alternative to the positional argument).",
+)
+parser.add_argument(
+    "--port",
+    default=os.getenv("TELEOP_PORT", "/dev/ttyACM0"),
+    help="Serial port of the SO-101 leader arm.",
+)
+parser.add_argument(
+    "--robot-id",
+    default="my_leader",
+    help="LeRobot calibration ID of the leader arm.",
+)
+parser.add_argument(
+    "--print-every",
+    type=int,
+    default=30,
+    help="Print diagnostics every N environment steps (default: 30).",
+)
+parser.add_argument(
+    "--rate",
+    type=float,
+    default=60.0,
+    help="Maximum wall-clock control rate in Hz; 0 disables pacing (default: 60).",
+)
+AppLauncher.add_app_launcher_args(parser)
+args_cli = parser.parse_args()
+
+selected_task = args_cli.task_option or args_cli.task_name
+if selected_task is None:
+    parser.error("a task name is required (positional or via --task)")
+if args_cli.print_every < 1:
+    parser.error("--print-every must be at least 1")
+if args_cli.rate < 0.0:
+    parser.error("--rate must be non-negative")
+
+args_cli.enable_cameras = "-visual-" in selected_task
+app_launcher = AppLauncher(args_cli)
+simulation_app = app_launcher.app
+
+import gymnasium as gym  # noqa: E402
+import torch  # noqa: E402
+
+import so101.tasks  # noqa: E402,F401  (registers environments)
+from so101.real.interface import LeRobotSO101Interface  # noqa: E402
+
+
+def _first_value(value: Any, default: Any = None) -> Any:
+    """Convert a scalar or first vectorized-environment value for logging."""
+    if value is None:
+        return default
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            return default
+        return value.reshape(-1)[0].item()
+    return value
+
+
+def _print_diagnostics(step: int, reward: torch.Tensor, info: dict[str, Any]) -> None:
+    """Print reward, success, and filtered jaw-to-held contact diagnostics."""
+    reward_value = float(_first_value(reward, 0.0))
+    phase = int(_first_value(info.get("reward_phase"), 0))
+    success = bool(_first_value(info.get("success"), False))
+    reward_success = float(_first_value(info.get("reward_success"), 0.0))
+    contact = bool(_first_value(info.get("jaw_contact"), False))
+    contact_force = float(_first_value(info.get("jaw_contact_force"), 0.0))
+    lift_height = float(_first_value(info.get("lift_height"), 0.0))
+    has_lifted = bool(_first_value(info.get("has_lifted"), False))
+    reach_distance = float(_first_value(info.get("reach_distance"), float("nan")))
+    target_distance = float(
+        _first_value(info.get("held_target_distance"), float("nan"))
+    )
+
+    print(
+        f"[TELEOP] step={step:06d} reward={reward_value:7.4f} phase={phase} "
+        f"success={success} reward_success={reward_success:.0f} "
+        f"jaw_contact={contact} contact_force={contact_force:7.3f}N "
+        f"lift={lift_height * 1000.0:7.2f}mm has_lifted={has_lifted} "
+        f"reach_dist={reach_distance * 1000.0:7.2f}mm "
+        f"target_dist={target_distance * 1000.0:7.2f}mm",
+        flush=True,
+    )
+
+
+def main() -> None:
+    cfg_entry = gym.spec(selected_task).kwargs["env_cfg_entry_point"]
+    env_cfg = cfg_entry()
+    env_cfg.scene.num_envs = 1
+    env_cfg.sim.device = args_cli.device
+
+    env = gym.make(selected_task, cfg=env_cfg, render_mode=None)
+    leader = LeRobotSO101Interface(
+        device=env.unwrapped.device,
+        port=args_cli.port,
+        id=args_cli.robot_id,
+        cameras={},
+        fps=30,
+        kind="leader",
+    )
+    leader_connected = False
+
+    try:
+        env.reset()
+        leader.init_device()
+        leader.connect()
+        leader_connected = True
+
+        actions = env.unwrapped.robot.data.default_joint_pos.clone()
+        print(f"[INFO] Teleoperating {selected_task} with leader {args_cli.robot_id}")
+        print(f"[INFO] Leader serial port: {args_cli.port}")
+        print("[INFO] Press Ctrl+C or close the Isaac Sim window to stop.")
+        print(
+            "[INFO] Diagnostics: reward/phase/success and jaw-to-held contact/lift/target distance."
+        )
+
+        step = 0
+        control_period = 1.0 / args_cli.rate if args_cli.rate > 0.0 else 0.0
+        while simulation_app.is_running():
+            step_started = time.perf_counter()
+            with torch.inference_mode():
+                leader_action = leader.robot.get_action()
+                _, mapped_action = leader.real_to_sim_obs_processor(leader_action)
+
+                actions[:] = mapped_action
+                _, reward, _, _, info = env.step(actions)
+
+            step += 1
+            if step == 1 or step % args_cli.print_every == 0:
+                _print_diagnostics(step, reward, info)
+
+            remaining = control_period - (time.perf_counter() - step_started)
+            if remaining > 0.0:
+                time.sleep(remaining)
+    except KeyboardInterrupt:
+        print("\n[INFO] Teleoperation stopped by user.")
+    finally:
+        if leader_connected:
+            leader.robot.disconnect()
+        env.close()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    finally:
+        simulation_app.close()

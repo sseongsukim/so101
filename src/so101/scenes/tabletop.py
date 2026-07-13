@@ -20,8 +20,11 @@ ROBOT_BASE_BOTTOM_Z = 0.0300814467
 
 # Camera poses are deliberately kept as module-level constants so they can be
 # calibrated against the real setup without changing the scene structure.
-WRIST_CAMERA_OFFSET_POS = (-0.005, 0.060, -0.062)
-WRIST_CAMERA_OFFSET_ROT = (0.9238795, -0.3826834, 0.0, 0.0)
+# Match the local physical SO-101: its wrist camera is the right-side mirror of
+# the workshop asset. The proper camera frame therefore uses the mirrored
+# local-X rotation; the USD visual/collider also mirror their local Y geometry.
+WRIST_CAMERA_OFFSET_POS = (-0.005, -0.060, -0.062)
+WRIST_CAMERA_OFFSET_ROT = (0.9238795, 0.3826834, 0.0, 0.0)
 EXTERNAL_CAMERA_POS = (0.78, -0.62, 0.48)
 EXTERNAL_CAMERA_ROT = (0.7979214, 0.4994660, 0.1790317, 0.2860119)
 

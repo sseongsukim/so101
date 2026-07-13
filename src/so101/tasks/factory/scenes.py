@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
 
+from so101.assets import SO101_CONTACT_GRASP_CFG
 from so101.scenes.tabletop import (
     EXTERNAL_CAMERA_POS,
     EXTERNAL_CAMERA_ROT,
@@ -32,10 +34,46 @@ TASK_Y = 0.0
 STAGING_X = 0.22
 STAGING_Y = -0.09
 
+FACTORY_DEFAULT_JOINT_POS = {
+    "Rotation": -0.0685,
+    "Pitch": -1.3674,
+    "Elbow": 1.3919,
+    "Wrist_Pitch": 1.0408,
+    "Wrist_Roll": -0.0211,
+    "Jaw": 0.0808,
+}
+
+
+def jaw_contact_cfg(held_body_name: str) -> ContactSensorCfg:
+    """Create a jaw sensor filtered to one Factory articulation rigid body."""
+    return ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/jaw",
+        update_period=0.0,
+        history_length=1,
+        debug_vis=False,
+        # PhysX filtered-contact views require the exact rigid-body prim here.
+        # The configured HeldAsset prim is only the articulation container.
+        filter_prim_paths_expr=[f"{{ENV_REGEX_NS}}/HeldAsset/{held_body_name}"],
+    )
+
 
 @configclass
-class SO101PegInsertSceneCfg(SO101TabletopSceneCfg):
+class SO101FactorySceneCfg(SO101TabletopSceneCfg):
+    """Tabletop scene with filtered contact sensing on the moving jaw."""
+
+    robot = SO101_CONTACT_GRASP_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        init_state=SO101_CONTACT_GRASP_CFG.init_state.replace(
+            joint_pos=FACTORY_DEFAULT_JOINT_POS
+        ),
+    )
+
+
+@configclass
+class SO101PegInsertSceneCfg(SO101FactorySceneCfg):
     """SO-101, table, and the original-scale Factory 8 mm peg and hole."""
+
+    jaw_contact = jaw_contact_cfg("forge_round_peg_8mm")
 
     fixed_asset = factory_asset_cfg(
         "{ENV_REGEX_NS}/FixedAsset",
@@ -57,8 +95,10 @@ class SO101PegInsertSceneCfg(SO101TabletopSceneCfg):
 
 
 @configclass
-class SO101GearMeshSceneCfg(SO101TabletopSceneCfg):
+class SO101GearMeshSceneCfg(SO101FactorySceneCfg):
     """SO-101, table, and the complete 75%-scale Factory gear set."""
+
+    jaw_contact = jaw_contact_cfg("factory_gear_medium")
 
     fixed_asset = factory_asset_cfg(
         "{ENV_REGEX_NS}/FixedAsset",
@@ -93,8 +133,10 @@ class SO101GearMeshSceneCfg(SO101TabletopSceneCfg):
 
 
 @configclass
-class SO101NutThreadSceneCfg(SO101TabletopSceneCfg):
+class SO101NutThreadSceneCfg(SO101FactorySceneCfg):
     """SO-101, table, and the original-scale Factory M16 nut and bolt."""
+
+    jaw_contact = jaw_contact_cfg("factory_nut_loose")
 
     fixed_asset = factory_asset_cfg(
         "{ENV_REGEX_NS}/FixedAsset",

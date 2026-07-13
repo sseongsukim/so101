@@ -1,0 +1,37 @@
+#usda 1.0
+(
+    defaultPrim = "so101_new_calib"
+    subLayers = [
+        @./SO-ARM101-USD.usd@
+    ]
+)
+
+# The workshop asset mounts the wrist-camera assembly on the opposite side
+# from the local physical SO-101.  Keep the original robot as a sublayer and
+# override only the reusable camera visual and collision source prims.  Their
+# instances under /so101_new_calib/gripper inherit these transforms.
+over "visuals"
+{
+    over "gripper"
+    {
+        over "camera_mount"
+        {
+            quatd xformOp:orient = (6.123233995736766e-17, 8.197998546692573e-18, -0.7071067811865475, 0.7071067811865476)
+            double3 xformOp:scale = (1, -1, 1)
+            double3 xformOp:translate = (-0.0039141791838348955, -0.025696293891666135, -0.029035789536837282)
+        }
+    }
+}
+
+over "colliders"
+{
+    over "gripper"
+    {
+        over "camera_mount"
+        {
+            quatd xformOp:orient = (6.123233995736766e-17, 8.197998546692573e-18, -0.7071067811865475, 0.7071067811865476)
+            double3 xformOp:scale = (1, -1, 1)
+            double3 xformOp:translate = (-0.0039141791838348955, -0.025696293891666135, -0.029035789536837282)
+        }
+    }
+}
