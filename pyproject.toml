@@ -37,4 +37,4 @@ so101-check-calibration = "so101.real.check_calibration:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-so101 = ["assets/usd/*.usd", "real/*.json", "real/sample_calibrations/*.json"]
+so101 = ["assets/usd/**/*.usd", "real/*.json", "real/sample_calibrations/*.json"]

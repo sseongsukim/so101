@@ -4,6 +4,7 @@ Examples:
 
     python scripts/teleop_task.py so101-PegInsert-v0 --port /dev/ttyACM0
     python scripts/teleop_task.py --task so101-GearMesh-v0 --print-every 1
+    python scripts/teleop_task.py so101-StackCube-v0 --parallel-gripper
 """
 
 from __future__ import annotations
@@ -28,6 +29,11 @@ TASK_NAMES = (
 
 parser = argparse.ArgumentParser(
     description="Teleoperate an SO-101 task with a physical SO-101 leader arm."
+)
+parser.add_argument(
+    "--parallel-gripper",
+    action="store_true",
+    help="Teleoperate the parallel-gripper robot using the leader's six-value action.",
 )
 parser.add_argument(
     "task_name",
@@ -77,13 +83,19 @@ if args_cli.rate < 0.0:
     parser.error("--rate must be non-negative")
 
 args_cli.enable_cameras = "-visual-" in selected_task
+if args_cli.parallel_gripper and args_cli.enable_cameras:
+    parser.error("--parallel-gripper currently supports non-visual task scenes only")
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import gymnasium as gym  # noqa: E402
 import torch  # noqa: E402
+import isaaclab.sim as sim_utils  # noqa: E402
+from isaaclab.scene import InteractiveScene  # noqa: E402
 
 import so101.tasks  # noqa: E402,F401  (registers environments)
+from so101.assets import SO101_PARALLEL_CFG, logical_to_parallel_joint_pos  # noqa: E402
+from so101.assets.materials import spawn_so101_parallel_viewer_usd  # noqa: E402
 from so101.configs import make_env_cfg  # noqa: E402
 from so101.real.interface import LeRobotSO101Interface  # noqa: E402
 
@@ -125,7 +137,94 @@ def _print_diagnostics(step: int, reward: torch.Tensor, info: dict[str, Any]) ->
     )
 
 
-def main() -> None:
+def teleop_parallel_gripper() -> None:
+    """Kinematically teleoperate the parallel robot in the selected task scene."""
+    env_cfg = make_env_cfg(selected_task, num_envs=1, device=args_cli.device)
+    scene_cfg = env_cfg.scene
+    scene_cfg.robot = SO101_PARALLEL_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/Robot"
+    )
+    scene_cfg.robot.spawn.func = spawn_so101_parallel_viewer_usd
+    # Existing task sensors target /Robot/jaw, which does not exist on the
+    # parallel asset. This path visualizes leader control without evaluating
+    # the old single-jaw contact reward.
+    scene_cfg.jaw_contact = None
+
+    sim = sim_utils.SimulationContext(env_cfg.sim)
+    sim.set_camera_view(eye=(0.82, -0.68, 0.50), target=(0.27, 0.0, 0.10))
+    scene = InteractiveScene(scene_cfg)
+    sim.reset()
+    robot = scene["robot"]
+
+    expected_joint_order = [
+        "base_link_to_link1",
+        "link1_to_link2",
+        "link2_to_link3",
+        "link3_to_link4",
+        "link4_to_link5",
+        "left_clamp",
+        "right_clamp",
+    ]
+    if robot.joint_names != expected_joint_order:
+        raise RuntimeError(
+            "Unexpected parallel joint order. "
+            f"Expected {expected_joint_order}, got {robot.joint_names}."
+        )
+
+    leader = LeRobotSO101Interface(
+        device=robot.device,
+        port=args_cli.port,
+        id=args_cli.robot_id,
+        cameras={},
+        fps=30,
+        kind="leader",
+    )
+    leader_connected = False
+    try:
+        leader.init_device()
+        leader.connect()
+        leader_connected = True
+        print(f"[INFO] Parallel-gripper teleoperation: {selected_task}")
+        print("[INFO] Leader gripper -10..100 deg maps linearly to 0..0.037 m.")
+        print("[INFO] Press Ctrl+C or close the Isaac Sim window to stop.")
+
+        step = 0
+        zero_velocity = torch.zeros((1, 7), device=robot.device)
+        control_period = 1.0 / args_cli.rate if args_cli.rate > 0.0 else 0.0
+        while simulation_app.is_running():
+            step_started = time.perf_counter()
+            with torch.inference_mode():
+                leader_action = leader.robot.get_action()
+                _, logical_action = leader.real_to_sim_obs_processor(leader_action)
+                if logical_action.ndim == 1:
+                    logical_action = logical_action.unsqueeze(0)
+                parallel_action = logical_to_parallel_joint_pos(logical_action)
+                robot.write_joint_state_to_sim(parallel_action, zero_velocity)
+                sim.forward()
+                sim.render()
+
+            step += 1
+            if step == 1 or step % args_cli.print_every == 0:
+                leader_gripper_deg = float(logical_action[0, 5] * 180.0 / torch.pi)
+                opening = float(parallel_action[0, 6])
+                print(
+                    f"[PARALLEL] step={step:06d} "
+                    f"leader_gripper={leader_gripper_deg:7.2f}deg "
+                    f"left={-opening:7.4f}m right={opening:7.4f}m",
+                    flush=True,
+                )
+
+            remaining = control_period - (time.perf_counter() - step_started)
+            if remaining > 0.0:
+                time.sleep(remaining)
+    except KeyboardInterrupt:
+        print("\n[INFO] Parallel-gripper teleoperation stopped by user.")
+    finally:
+        if leader_connected:
+            leader.robot.disconnect()
+
+
+def teleop_task() -> None:
     env_cfg = make_env_cfg(selected_task, num_envs=1, device=args_cli.device)
 
     env = gym.make(selected_task, cfg=env_cfg, render_mode=None)
@@ -177,6 +276,13 @@ def main() -> None:
         if leader_connected:
             leader.robot.disconnect()
         env.close()
+
+
+def main() -> None:
+    if args_cli.parallel_gripper:
+        teleop_parallel_gripper()
+    else:
+        teleop_task()
 
 
 if __name__ == "__main__":

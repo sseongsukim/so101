@@ -42,6 +42,53 @@ robot_cfg = SO101_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 ```
 
 Use `SO101_NO_CAMERA_CFG` if your environment should not include the camera USD.
+
+### Parallel gripper
+
+`SO101_PARALLEL_CFG` loads `SO-ARM101-USD-PARALLEL-CAMERA.usd`.  Its five arm
+actuators retain the stiffness, damping, and effort parameters from
+`SO101_CFG`; only their URDF joint names differ.  The imported mimic API is
+incomplete, so the spawn hook removes it and explicitly drives both clamp DOFs.
+The public command remains six-dimensional while the physical target has seven
+values.
+
+Existing controllers can retain their calibrated six-value command space by
+converting immediately before applying a target:
+
+```python
+from so101.assets import SO101_PARALLEL_CFG, logical_to_parallel_joint_pos
+
+robot_cfg = SO101_PARALLEL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+physical_targets = logical_to_parallel_joint_pos(logical_targets)
+robot.set_joint_position_target(physical_targets)
+```
+
+The first five values preserve the existing SO-101 convention.  The final
+logical Jaw value (`-10..100` degrees) is mapped to a `right_clamp` displacement
+of `0..0.037 m`; the other tip receives the symmetric `0..-0.037 m` target.
+Use `parallel_to_logical_joint_pos` when publishing parallel-USD joint state to
+an existing policy or real-robot interface.  A ready-to-spawn tabletop scene is
+available as `SO101ParallelTabletopSceneCfg`.
+
+To inspect the assembled black robot without starting the high-detail convex
+collision simulation, run:
+
+```bash
+python scripts/view_task.py --parallel-gripper
+```
+
+The physical leader can drive the same parallel articulation in a non-visual
+task scene:
+
+```bash
+python scripts/teleop_task.py so101-StackCube-v0 --parallel-gripper --port /dev/ttyACM0
+```
+
+The first five leader joints pass through unchanged. The leader gripper's
+calibrated `-10..100` degree value maps linearly to `0..0.037 m`; the physical
+joint targets are `left_clamp=-opening` and `right_clamp=+opening`. This mode
+uses kinematic joint placement for control inspection and does not evaluate the
+old `/Robot/jaw` contact reward.
 Use `SO101_CONTACT_GRASP_CFG` when contact sensors are needed for grasp logic.
 
 ### Tabletop scene viewer

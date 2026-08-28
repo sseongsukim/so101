@@ -8,7 +8,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.utils import configclass
 
-from so101.assets import SO101_CFG
+from so101.assets import SO101_CFG, SO101_PARALLEL_CFG
 
 TABLETOP_LENGTH = 0.50
 TABLETOP_WIDTH = 0.50
@@ -121,3 +121,10 @@ class SO101VisualTabletopSceneCfg(SO101TabletopSceneCfg):
         EXTERNAL_CAMERA_POS,
         EXTERNAL_CAMERA_ROT,
     )
+
+
+@configclass
+class SO101ParallelTabletopSceneCfg(SO101TabletopSceneCfg):
+    """Tabletop scene using the symmetric parallel-gripper SO-101 asset."""
+
+    robot = SO101_PARALLEL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
