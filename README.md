@@ -5,10 +5,8 @@ SO-101 robot assets and real-robot interface helpers for Isaac Lab experiments.
 This repository intentionally does not copy the workshop task/environment. It
 keeps only the parts that are useful when building a custom Isaac Lab scene:
 
-- `so101.assets.SO101_CFG`: Isaac Lab `ArticulationCfg` using the SO-101 USD.
-  The printed robot body is black and the wrist-camera assembly is mounted on
-  the right side to match the local real robot.
-- `so101.assets.SO101_NO_CAMERA_CFG`: the same robot without the camera mesh.
+- `so101.assets.SO101_CFG`: camera-free Isaac Lab `ArticulationCfg` using the
+  SO-101 USD with a black printed body.
 - `so101.real.interface.LeRobotSO101Interface`: LeRobot bridge utilities for
   mapping real SO-101 joint values to Isaac Lab radians and back.
 - `so101.real.control.SO101Control`: a small real-robot control wrapper with
@@ -41,54 +39,6 @@ from so101.assets import SO101_CFG
 robot_cfg = SO101_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 ```
 
-Use `SO101_NO_CAMERA_CFG` if your environment should not include the camera USD.
-
-### Parallel gripper
-
-`SO101_PARALLEL_CFG` loads `SO-ARM101-USD-PARALLEL-CAMERA.usd`.  Its five arm
-actuators retain the stiffness, damping, and effort parameters from
-`SO101_CFG`; only their URDF joint names differ.  The imported mimic API is
-incomplete, so the spawn hook removes it and explicitly drives both clamp DOFs.
-The public command remains six-dimensional while the physical target has seven
-values.
-
-Existing controllers can retain their calibrated six-value command space by
-converting immediately before applying a target:
-
-```python
-from so101.assets import SO101_PARALLEL_CFG, logical_to_parallel_joint_pos
-
-robot_cfg = SO101_PARALLEL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-physical_targets = logical_to_parallel_joint_pos(logical_targets)
-robot.set_joint_position_target(physical_targets)
-```
-
-The first five values preserve the existing SO-101 convention.  The final
-logical Jaw value (`-10..100` degrees) is mapped to a `right_clamp` displacement
-of `0..0.037 m`; the other tip receives the symmetric `0..-0.037 m` target.
-Use `parallel_to_logical_joint_pos` when publishing parallel-USD joint state to
-an existing policy or real-robot interface.  A ready-to-spawn tabletop scene is
-available as `SO101ParallelTabletopSceneCfg`.
-
-To inspect the assembled black robot without starting the high-detail convex
-collision simulation, run:
-
-```bash
-python scripts/view_task.py --parallel-gripper
-```
-
-The physical leader can drive the same parallel articulation in a non-visual
-task scene:
-
-```bash
-python scripts/teleop_task.py so101-StackCube-v0 --parallel-gripper --port /dev/ttyACM0
-```
-
-The first five leader joints pass through unchanged. The leader gripper's
-calibrated `-10..100` degree value maps linearly to `0..0.037 m`; the physical
-joint targets are `left_clamp=-opening` and `right_clamp=+opening`. This mode
-uses kinematic joint placement for control inspection and does not evaluate the
-old `/Robot/jaw` contact reward.
 Use `SO101_CONTACT_GRASP_CFG` when contact sensors are needed for grasp logic.
 
 ### Tabletop scene viewer
@@ -112,40 +62,7 @@ Close the Isaac Sim window to stop the script. Standard `AppLauncher` options
 are available; for example, use `--device cpu` when a CUDA physics device is
 not desired.
 
-### Cameras
-
-The visual tabletop scene variant includes two adjustable 640x480 RGB-D cameras:
-
-- `wrist_camera`, attached under `Robot/gripper/gripper_cam`
-- `external_camera`, fixed above and to the side of the table
-
-Their default poses are grouped near the top of
-`src/so101/scenes/tabletop.py`. They can also be changed per environment
-without editing the shared defaults:
-
-```python
-env_cfg.scene.wrist_camera.offset.pos = (x, y, z)
-env_cfg.scene.wrist_camera.offset.rot = (w, x, y, z)
-env_cfg.scene.external_camera.offset.pos = (x, y, z)
-env_cfg.scene.external_camera.offset.rot = (w, x, y, z)
-```
-
-The workshop's original left-camera USD remains unchanged as
-`SO-ARM101-USD.usd`. `SO101_CFG` uses
-`SO-ARM101-USD-RIGHT-CAMERA.usd`, a non-destructive overlay that mirrors the
-camera visual mesh and camera-mount collider to the physical robot's right
-side. Its translation, orientation, and local geometry scale together form an
-exact reflection across the gripper's center plane; changing only translation
-would place the asymmetric mount inside the gripper.
-
-State environments do not spawn either camera. Visual environments spawn both
-and expose normalized RGB images in the policy observation.
-
-This checkout is Isaac Lab v2.2.0 and expects Isaac Sim 5.0.0. Camera render
-products may fail during startup when it is run against an incompatible Isaac
-Sim package version; keep those versions aligned for visual environments.
-
-### Scaled contact-task environments
+### StackCube environment
 
 Environment configuration is defined explicitly under `src/so101/configs/`.
 Scripts create configurations through the public helper instead of reading
@@ -164,11 +81,10 @@ and `configs/registry.py` maps every Gym task ID to its configuration class.
 These use Isaac Lab's dataclass-compatible `@configclass` so nested scene and
 simulation configurations retain `copy`, `replace`, and validation behavior.
 
-Four Gymnasium environments build directly on the SO-101 tabletop scene and
-load only the required Isaac Factory assets. PegInsert and NutThread use the
-original Factory asset scale. GearMesh alone uses 75% scale, with its masses
-scaled by `0.75 ** 3`. StackCube uses exact Isaac Lab cuboid primitives: a
-movable 2.5 cm cube and a movable 4 cm target cube.
+The registered Gymnasium tasks are `so101-StackCube-v0` (state-only,
+camera-free robot) and `so101-visual-StackCube-v0` (camera-equipped robot with
+wrist and external RGB-D sensors). Both use exact Isaac Lab cuboid primitives:
+a movable 2.5 cm cube and a movable 4 cm target cube.
 
 StackCube randomizes both cube poses on every episode reset. It samples the
 large cube first, then rejection-samples the small cube until their XY centers
@@ -177,19 +93,8 @@ are at least 6 cm apart. Both centers use `x=0.22..0.30 m` and
 tabletop.
 
 ```bash
-python scripts/view_task.py --task so101-PegInsert-v0
-python scripts/view_task.py --task so101-GearMesh-v0
-python scripts/view_task.py --task so101-NutThread-v0
 python scripts/view_task.py --task so101-StackCube-v0
-```
-
-PegInsert, GearMesh, and NutThread return a single 38-dimensional `state`
-tensor. The terms are concatenated in this order:
-
-```text
-joint_pos (6), joint_vel (6), ee_pos_rel_target (3),
-ee_quat_rel_target (4), ee_linvel (3), ee_angvel (3),
-held_pos_rel_target (3), held_quat_rel_target (4), previous_action (6)
+python scripts/view_task.py --task so101-visual-StackCube-v0
 ```
 
 StackCube instead returns the IsaacGym Franka cube-stack common state plus
@@ -200,47 +105,7 @@ joint position (6), and joint velocity (6), for 29 dimensions.
 For StackCube, the EEF position is the midpoint of two explicit distal grasp
 points derived from the SO-101 colliders: one fixed to `/Robot/gripper` and one
 fixed to `/Robot/jaw`. The EEF quaternion remains the `/Robot/gripper`
-orientation. The other assembly tasks retain the Workshop-compatible
-`/Robot/gripper` body-origin EEF.
-
-The final element of `joint_pos` is the measured SO-101 Jaw angle and the final
-element of `previous_action` is its preceding absolute target.  Position errors
-are represented in the global frame.  GearMesh computes the medium-shaft target
-from the scaled local offset and the gear-base pose.
-
-Success follows the Isaac Factory geometric checks: the held assembly frame
-must be centered within the task's XY tolerance and below its insertion/thread
-height threshold. NutThread additionally checks the end-effector yaw progress.
-Success is reported in the step info as `success` (per environment) and
-`successes` (mean), but does not terminate the episode; time limits produce
-truncation.
-
-The shared task dense reward is split into three ordered phases. Phase 0 has no orientation
-objective. It rewards reaching the held frame, contact between `/Robot/jaw` and
-`/HeldAsset`, and upward motion while that contact is present:
-
-```text
-r0 = 0.5 exp(-0.5 (d_reach / 0.05)^2)
-   + 0.25 contact
-   + 0.25 contact clamp(lift_height / 0.01, 0, 1)
-```
-
-A valid lift requires at least 0.1 N of filtered jaw contact and a 1 cm rise
-from that environment's reset height. Once achieved, the lifted state is
-latched for the rest of the episode and Phase 1 applies the task-frame target
-reward:
-
-```text
-r1 = 1.0
-   + 0.5 exp(-0.5 (d_target / 0.05)^2)
-   + 0.5 exp(-0.5 (d_target / 0.005)^2)
-```
-
-Phase 2 adds `2.0` when the task-specific geometric success condition is met
-after a valid lift. Thus Phase 0 occupies `[0, 1]`, Phase 1 occupies `[1, 2]`,
-and successful lifted placement occupies `[3, 4]`. Step info exposes the phase,
-filtered contact force, lift height, reach distance, held-target distance, and
-the individual reward terms.
+orientation.
 
 StackCube uses the IsaacGym Franka cube-stack reward instead: distance `0.1`,
 lift `1.5`, alignment `2.0`, and exclusive stack-success reward `16.0`. Stack
@@ -251,40 +116,15 @@ match cubes half the size of the Franka example. Success sets
 `terminated=True`; the 350-step (approximately 11.67-second) time limit sets
 `truncated=True` when success has not occurred.
 
-Visual variants use the same task geometry and additionally return two camera
-images alongside the same task state:
-
-```bash
-python scripts/view_task.py --task so101-visual-PegInsert-v0
-python scripts/view_task.py --task so101-visual-GearMesh-v0
-python scripts/view_task.py --task so101-visual-NutThread-v0
-python scripts/view_task.py --task so101-visual-StackCube-v0
-```
-
-Their observation is a flat dictionary. StackCube state has 29 dimensions;
-the other task states have 38:
-
-```python
-{
-    "state": float_tensor,        # (num_envs, 29 or 38)
-    "wrist_image": float_tensor,  # (num_envs, 480, 640, 3), range [0, 1]
-    "front_image": float_tensor,  # (num_envs, 480, 640, 3), range [0, 1]
-}
-```
-
 ### Leader-arm task teleoperation
 
-A calibrated physical SO-101 leader arm can directly command any task's six
-absolute simulation joint targets. Install the real-robot dependencies, connect
-the leader over USB, and pass either a state or visual task name:
+A calibrated physical SO-101 leader arm can directly command StackCube's six
+absolute simulation joint targets:
 
 ```bash
 lerobot-calibrate --teleop.type=so101_leader \
     --teleop.port=/dev/ttyACM0 --teleop.id=leader_arm_1
 
-python scripts/teleop_task.py so101-PegInsert-v0 --port /dev/ttyACM0
-python scripts/teleop_task.py --task_name so101-GearMesh-v0 --robot-id leader_arm_1
-python scripts/teleop_task.py so101-NutThread-v0 --print-every 1
 python scripts/teleop_task.py so101-StackCube-v0 --print-every 1
 ```
 
@@ -297,11 +137,8 @@ can be used instead of the corresponding command-line options.
 
 The environment action is a six-dimensional absolute SO-101 joint-position
 target in radians, matching the Sim-to-Real SO-101 Workshop. The current
-implementation supplies task geometry, physics, cameras, joint
-observations/actions, default-pose reset behavior, jaw-filtered contact sensing,
-and phase-based reach/lift/placement rewards. More task-specific insertion,
-meshing, and threading shaping can be layered on this shared reward; the Franka
-reset cannot be reused because its fingertip frame, gripper, and 7-DoF IK differ.
+implementation supplies task geometry, physics, joint observations/actions,
+default-pose reset behavior, and cube-stack rewards.
 
 The workshop changes the robot color by editing the USD shader at
 `Looks/material_a_3d_printed/Shader`. This package uses the same mechanism and

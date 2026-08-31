@@ -3,13 +3,7 @@
 from .base import SO101TaskEnvCfg, SO101VisualTaskEnvCfg
 from .registry import ENV_CFG_REGISTRY, make_env_cfg
 from .tasks import (
-    SO101GearMeshEnvCfg,
-    SO101NutThreadEnvCfg,
-    SO101PegInsertEnvCfg,
     SO101StackCubeEnvCfg,
-    SO101VisualGearMeshEnvCfg,
-    SO101VisualNutThreadEnvCfg,
-    SO101VisualPegInsertEnvCfg,
     SO101VisualStackCubeEnvCfg,
     STACK_CUBE_CONTROL_HZ,
     STACK_CUBE_EPISODE_LENGTH_S,
@@ -18,14 +12,8 @@ from .tasks import (
 
 __all__ = [
     "ENV_CFG_REGISTRY",
-    "SO101GearMeshEnvCfg",
-    "SO101NutThreadEnvCfg",
-    "SO101PegInsertEnvCfg",
     "SO101StackCubeEnvCfg",
     "SO101TaskEnvCfg",
-    "SO101VisualGearMeshEnvCfg",
-    "SO101VisualNutThreadEnvCfg",
-    "SO101VisualPegInsertEnvCfg",
     "SO101VisualStackCubeEnvCfg",
     "SO101VisualTaskEnvCfg",
     "STACK_CUBE_CONTROL_HZ",

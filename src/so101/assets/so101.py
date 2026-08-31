@@ -17,13 +17,12 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaacsim.core.utils.rotations import euler_angles_to_quat
 
-from .materials import spawn_so101_parallel_usd, spawn_so101_usd_with_color
+from .materials import spawn_so101_usd_with_color
 
 ASSET_DIR = Path(__file__).resolve().parent
 USD_DIR = ASSET_DIR / "usd"
-SO101_USD_PATH = USD_DIR / "SO-ARM101-USD-RIGHT-CAMERA.usd"
-SO101_NO_CAMERA_USD_PATH = USD_DIR / "SO-ARM101-USD-NO-CAMERA.usd"
-SO101_PARALLEL_USD_PATH = USD_DIR / "SO-ARM101-USD-PARALLEL-CAMERA.usd"
+SO101_USD_PATH = USD_DIR / "SO-ARM101-USD-NO-CAMERA.usd"
+SO101_CAMERA_USD_PATH = USD_DIR / "SO-ARM101-USD-RIGHT-CAMERA.usd"
 
 SO101_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
@@ -95,37 +94,11 @@ SO101_CFG = ArticulationCfg(
     },
 )
 
-SO101_NO_CAMERA_CFG = SO101_CFG.copy()
-SO101_NO_CAMERA_CFG.spawn.usd_path = str(SO101_NO_CAMERA_USD_PATH)
-
 SO101_CONTACT_GRASP_CFG = SO101_CFG.copy()
 SO101_CONTACT_GRASP_CFG.spawn.activate_contact_sensors = True
 
-# Parallel-gripper variant.  The arm actuator gains intentionally match
-# SO101_CFG exactly; only the URDF joint names and the gripper actuator change.
-# The imported mimic relationship is incomplete, so both clamps are driven.
-SO101_PARALLEL_CFG = SO101_CFG.copy()
-SO101_PARALLEL_CFG.spawn.usd_path = str(SO101_PARALLEL_USD_PATH)
-SO101_PARALLEL_CFG.spawn.func = spawn_so101_parallel_usd
-SO101_PARALLEL_CFG.init_state.joint_pos = {
-    # Preserve the joint targets authored in the parallel USD exactly.
-    "base_link_to_link1": 0.0,
-    "link1_to_link2": 0.0,
-    "link2_to_link3": 0.0,
-    "link3_to_link4": 0.0,
-    "link4_to_link5": 0.0,
-    "right_clamp": 0.0,
-    "left_clamp": 0.0,
-}
-SO101_PARALLEL_CFG.actuators["rotation"].joint_names_expr = ["base_link_to_link1"]
-SO101_PARALLEL_CFG.actuators["pitch"].joint_names_expr = ["link1_to_link2"]
-SO101_PARALLEL_CFG.actuators["elbow"].joint_names_expr = ["link2_to_link3"]
-SO101_PARALLEL_CFG.actuators["wrist_pitch"].joint_names_expr = ["link3_to_link4"]
-SO101_PARALLEL_CFG.actuators["wrist_roll"].joint_names_expr = ["link4_to_link5"]
-SO101_PARALLEL_CFG.actuators["gripper"].joint_names_expr = [
-    "right_clamp",
-    "left_clamp",
-]
+SO101_CAMERA_CFG = SO101_CFG.copy()
+SO101_CAMERA_CFG.spawn.usd_path = str(SO101_CAMERA_USD_PATH)
 
-SO101_PARALLEL_CONTACT_CFG = SO101_PARALLEL_CFG.copy()
-SO101_PARALLEL_CONTACT_CFG.spawn.activate_contact_sensors = True
+SO101_CAMERA_CONTACT_GRASP_CFG = SO101_CAMERA_CFG.copy()
+SO101_CAMERA_CONTACT_GRASP_CFG.spawn.activate_contact_sensors = True

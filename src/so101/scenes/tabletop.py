@@ -8,7 +8,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.utils import configclass
 
-from so101.assets import SO101_CFG, SO101_PARALLEL_CFG
+from so101.assets import SO101_CAMERA_CFG, SO101_CFG
 
 TABLETOP_LENGTH = 0.50
 TABLETOP_WIDTH = 0.50
@@ -18,31 +18,23 @@ TABLETOP_THICKNESS = 0.04
 # the robot is visually and physically supported without moving its root pose.
 ROBOT_BASE_BOTTOM_Z = 0.0300814467
 
-# Camera poses are deliberately kept as module-level constants so they can be
-# calibrated against the real setup without changing the scene structure.
-# Match the local physical SO-101: its wrist camera is the right-side mirror of
-# the workshop asset. The proper camera frame therefore uses the mirrored
-# local-X rotation; the USD visual/collider also mirror their local Y geometry.
 WRIST_CAMERA_OFFSET_POS = (-0.005, -0.060, -0.062)
 WRIST_CAMERA_OFFSET_ROT = (0.9238795, 0.3826834, 0.0, 0.0)
-EXTERNAL_CAMERA_POS = (0.78, -0.62, 0.48)
-EXTERNAL_CAMERA_ROT = (0.7979214, 0.4994660, 0.1790317, 0.2860119)
+EXTERNAL_CAMERA_POS = (0.62, -0.50, 0.42)
+EXTERNAL_CAMERA_ROT = (0.8254465, 0.4737144, 0.1527951, 0.2662452)
 
 
 def camera_cfg(
     prim_path: str,
     pos: tuple[float, float, float],
     rot: tuple[float, float, float, float],
-    *,
-    width: int = 640,
-    height: int = 480,
-):
-    """Create an RGB-D camera; ``pos`` and ``rot`` use the OpenGL convention."""
+) -> CameraCfg:
+    """Create a 640x480 RGB-D pinhole camera in OpenGL convention."""
     return CameraCfg(
         prim_path=prim_path,
         update_period=0.0,
-        height=height,
-        width=width,
+        height=480,
+        width=640,
         data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
             projection_type="pinhole",
@@ -51,6 +43,7 @@ def camera_cfg(
         ),
         offset=CameraCfg.OffsetCfg(pos=pos, rot=rot, convention="opengl"),
     )
+
 
 
 @configclass
@@ -108,23 +101,16 @@ class SO101TabletopSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class SO101VisualTabletopSceneCfg(SO101TabletopSceneCfg):
-    """Tabletop scene variant that adds wrist and external RGB-D cameras."""
+    """Camera-equipped robot with wrist and external RGB-D sensors."""
 
+    robot = SO101_CAMERA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     wrist_camera = camera_cfg(
         "{ENV_REGEX_NS}/Robot/gripper/gripper_cam",
         WRIST_CAMERA_OFFSET_POS,
         WRIST_CAMERA_OFFSET_ROT,
     )
-
     external_camera = camera_cfg(
         "{ENV_REGEX_NS}/ExternalCamera",
         EXTERNAL_CAMERA_POS,
         EXTERNAL_CAMERA_ROT,
     )
-
-
-@configclass
-class SO101ParallelTabletopSceneCfg(SO101TabletopSceneCfg):
-    """Tabletop scene using the symmetric parallel-gripper SO-101 asset."""
-
-    robot = SO101_PARALLEL_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")

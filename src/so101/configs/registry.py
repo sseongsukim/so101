@@ -3,27 +3,12 @@
 from typing import TypeAlias
 
 from .base import SO101TaskEnvCfg
-from .tasks import (
-    SO101GearMeshEnvCfg,
-    SO101NutThreadEnvCfg,
-    SO101PegInsertEnvCfg,
-    SO101StackCubeEnvCfg,
-    SO101VisualGearMeshEnvCfg,
-    SO101VisualNutThreadEnvCfg,
-    SO101VisualPegInsertEnvCfg,
-    SO101VisualStackCubeEnvCfg,
-)
+from .tasks import SO101StackCubeEnvCfg, SO101VisualStackCubeEnvCfg
 
 EnvCfgType: TypeAlias = type[SO101TaskEnvCfg]
 
 ENV_CFG_REGISTRY: dict[str, EnvCfgType] = {
-    "so101-PegInsert-v0": SO101PegInsertEnvCfg,
-    "so101-GearMesh-v0": SO101GearMeshEnvCfg,
-    "so101-NutThread-v0": SO101NutThreadEnvCfg,
     "so101-StackCube-v0": SO101StackCubeEnvCfg,
-    "so101-visual-PegInsert-v0": SO101VisualPegInsertEnvCfg,
-    "so101-visual-GearMesh-v0": SO101VisualGearMeshEnvCfg,
-    "so101-visual-NutThread-v0": SO101VisualNutThreadEnvCfg,
     "so101-visual-StackCube-v0": SO101VisualStackCubeEnvCfg,
 }
 

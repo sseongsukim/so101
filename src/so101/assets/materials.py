@@ -12,14 +12,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
-from pxr import PhysxSchema, Sdf, UsdPhysics
+from pxr import Sdf
 
 import isaaclab.sim as sim_utils
 
 LOGGER = logging.getLogger(__name__)
 
 SO101_PRINTED_MATERIAL_SHADER_PATH = "Looks/material_a_3d_printed/Shader"
-SO101_PARALLEL_MATERIAL_SHADER_PATH = "so_101/Looks/material_silver/Shader"
 
 # Palette based on the Sim-to-Real SO-101 workshop domain-randomization colors.
 ROBOT_COLORS: dict[str, tuple[float, float, float]] = {
@@ -64,10 +63,6 @@ def set_so101_robot_color(
     """
     selected_color = resolve_robot_color(color)
     shader_paths = [material_shader_path]
-    if material_shader_path == SO101_PRINTED_MATERIAL_SHADER_PATH:
-        # The parallel-gripper asset is wrapped by /World/so_101 and uses the
-        # URDF's silver material instead of the workshop material name.
-        shader_paths.append(SO101_PARALLEL_MATERIAL_SHADER_PATH)
 
     material_prims = []
     for shader_path in shader_paths:
@@ -105,76 +100,4 @@ def spawn_so101_usd_with_color(
     """Spawn the SO-101 USD and apply the default printed-body color."""
     prim = sim_utils.spawn_from_usd(prim_path, cfg, translation=translation, orientation=orientation, **kwargs)
     set_so101_robot_color(prim_path, DEFAULT_ROBOT_COLOR)
-    return prim
-
-
-def spawn_so101_parallel_usd(
-    prim_path: str,
-    cfg: sim_utils.UsdFileCfg,
-    translation: tuple[float, float, float] | None = None,
-    orientation: tuple[float, float, float, float] | None = None,
-    **kwargs,
-):
-    """Spawn the parallel asset, repair its invalid mimic joint, and color it.
-
-    The source URDF importer authored ``PhysxMimicJointAPI`` without the
-    required referenceJoint relationship.  PhysX therefore exposes both clamp
-    joints as DOFs.  Remove that invalid API and drive the two clamps explicitly
-    and symmetrically from the six-value logical command adapter.
-    """
-    prim = sim_utils.spawn_from_usd(
-        prim_path,
-        cfg,
-        translation=translation,
-        orientation=orientation,
-        **kwargs,
-    )
-    left_joint_prims = sim_utils.find_matching_prims(
-        f"{prim_path}/so_101/joints/left_clamp"
-    )
-    if not left_joint_prims:
-        raise RuntimeError(f"Parallel left_clamp joint not found below {prim_path}.")
-    for left_joint_prim in left_joint_prims:
-        left_joint_prim.RemoveAPI(PhysxSchema.PhysxMimicJointAPI, "rotX")
-        left_joint = UsdPhysics.PrismaticJoint(left_joint_prim)
-        left_joint.GetLowerLimitAttr().Set(-0.037)
-        left_joint.GetUpperLimitAttr().Set(0.0)
-    set_so101_robot_color(prim_path, DEFAULT_ROBOT_COLOR)
-    return prim
-
-
-def spawn_so101_parallel_viewer_usd(
-    prim_path: str,
-    cfg: sim_utils.UsdFileCfg,
-    translation: tuple[float, float, float] | None = None,
-    orientation: tuple[float, float, float, float] | None = None,
-    **kwargs,
-):
-    """Spawn the repaired parallel robot with collisions disabled for viewing."""
-    prim = spawn_so101_parallel_usd(
-        prim_path,
-        cfg,
-        translation=translation,
-        orientation=orientation,
-        **kwargs,
-    )
-    stage = prim.GetStage()
-    robot_prefix = f"{prim_path}/"
-
-    # Collision meshes are instance prims in the imported USD. Make only this
-    # viewer copy editable, then disable every CollisionAPI below the robot.
-    instance_prims = [
-        child
-        for child in stage.Traverse()
-        if str(child.GetPath()).startswith(robot_prefix) and child.IsInstance()
-    ]
-    for instance_prim in instance_prims:
-        instance_prim.SetInstanceable(False)
-
-    for child in stage.Traverse():
-        if not str(child.GetPath()).startswith(robot_prefix):
-            continue
-        collision = UsdPhysics.CollisionAPI(child)
-        if collision:
-            collision.GetCollisionEnabledAttr().Set(False)
     return prim
