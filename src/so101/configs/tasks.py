@@ -14,16 +14,14 @@ STACK_CUBE_EPISODE_LENGTH_S = STACK_CUBE_MAX_EPISODE_STEPS / STACK_CUBE_CONTROL_
 @configclass
 class SO101StackCubeEnvCfg(SO101TaskEnvCfg):
     scene = SO101StackCubeSceneCfg(num_envs=1, env_spacing=1.0, clone_in_fabric=False)
-    observation_space = {"state": 29}
+    observation_space = {"state": 36}
     state_space = 0
     episode_length_s = STACK_CUBE_EPISODE_LENGTH_S
     task_name = "stack_cube"
     success_xy_threshold = 0.01
     success_height_threshold = 0.005
-    randomize_asset_poses = True
-    asset_spawn_x_range = (0.22, 0.30)
-    asset_spawn_y_range = (-0.10, 0.10)
-    asset_spawn_min_separation = 0.06
+    asset_spawn_x_range = (0.20, 0.35)
+    asset_spawn_y_abs_range = (0.055, 0.15)
     stack_distance_gain = 20.0
     stack_lift_clearance = 0.02
     stack_gripper_away_threshold = 0.02
@@ -37,7 +35,7 @@ class SO101VisualStackCubeEnvCfg(SO101StackCubeEnvCfg):
         num_envs=1, env_spacing=1.0, clone_in_fabric=False
     )
     observation_space = {
-        "state": 29,
+        "state": 6,
         "wrist_image": [480, 640, 3],
         "front_image": [480, 640, 3],
     }

@@ -16,12 +16,12 @@ class SO101TaskEnvCfg(DirectRLEnvCfg):
     decimation = 4
     episode_length_s = 10.0
     action_space = 6
-    observation_space = {"state": 29}
+    observation_space = {"state": 36}
     state_space = 0
 
     viewer = ViewerCfg(
-        eye=(0.82, -0.68, 0.50),
-        lookat=(0.27, 0.0, 0.10),
+        eye=(0.0, 0.0, 0.65),
+        lookat=(0.30, 0.0, 0.0),
         resolution=(1280, 720),
         origin_type="env",
         env_index=0,
@@ -31,11 +31,8 @@ class SO101TaskEnvCfg(DirectRLEnvCfg):
     success_xy_threshold: float = 0.01
     success_height_threshold: float = 0.005
 
-    randomize_asset_poses: bool = False
     asset_spawn_x_range: tuple[float, float] = (0.0, 0.0)
-    asset_spawn_y_range: tuple[float, float] = (0.0, 0.0)
-    asset_spawn_min_separation: float = 0.0
-    asset_spawn_max_attempts: int = 100
+    asset_spawn_y_abs_range: tuple[float, float] = (0.0, 0.0)
 
     stack_distance_gain: float = 10.0
     stack_lift_clearance: float = 0.04
@@ -65,7 +62,7 @@ class SO101VisualTaskEnvCfg(SO101TaskEnvCfg):
     """State observation plus wrist and external RGB images."""
 
     observation_space = {
-        "state": 29,
+        "state": 6,
         "wrist_image": [480, 640, 3],
         "front_image": [480, 640, 3],
     }

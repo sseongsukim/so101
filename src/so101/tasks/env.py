@@ -75,12 +75,15 @@ class SO101TaskEnv(DirectRLEnv):
         cube_a_pos = self.held_asset.data.root_pos_w
         cube_a_quat = self.held_asset.data.root_quat_w
         cube_b_pos = self.fixed_asset.data.root_pos_w
+        cube_b_quat = self.fixed_asset.data.root_quat_w
         ee_pos, _, _ = self._get_grasp_points()
         ee_quat = self.robot.data.body_quat_w[:, self._ee_body_idx]
         state = torch.cat(
             (
                 cube_a_quat,
                 cube_a_pos,
+                cube_b_quat,
+                cube_b_pos,
                 cube_b_pos - cube_a_pos,
                 ee_pos,
                 ee_quat,
@@ -209,52 +212,48 @@ class SO101TaskEnv(DirectRLEnv):
 
         held_initial_root_z = None
         num_reset_envs = len(env_ids)
-        fixed_xy = None
-        held_xy = None
-        if self.cfg.randomize_asset_poses:
-            x_min, x_max = self.cfg.asset_spawn_x_range
-            y_min, y_max = self.cfg.asset_spawn_y_range
-            fixed_xy = torch.empty((num_reset_envs, 2), device=self.device)
-            fixed_xy[:, 0].uniform_(x_min, x_max)
-            fixed_xy[:, 1].uniform_(y_min, y_max)
+        x_min, x_max = self.cfg.asset_spawn_x_range
+        y_abs_min, y_abs_max = self.cfg.asset_spawn_y_abs_range
+        if x_min >= x_max or y_abs_min <= 0.0 or y_abs_min >= y_abs_max:
+            raise ValueError(
+                "Asset spawn ranges require x_min < x_max and "
+                "0 < y_abs_min < y_abs_max."
+            )
 
-            held_xy = torch.empty_like(fixed_xy)
-            held_xy[:, 0].uniform_(x_min, x_max)
-            held_xy[:, 1].uniform_(y_min, y_max)
-            for _ in range(self.cfg.asset_spawn_max_attempts):
-                too_close = (
-                    torch.linalg.vector_norm(held_xy - fixed_xy, dim=-1)
-                    < self.cfg.asset_spawn_min_separation
-                )
-                if not torch.any(too_close):
-                    break
-                num_resamples = int(too_close.sum().item())
-                held_xy[too_close, 0] = torch.empty(
-                    num_resamples, device=self.device
-                ).uniform_(x_min, x_max)
-                held_xy[too_close, 1] = torch.empty(
-                    num_resamples, device=self.device
-                ).uniform_(y_min, y_max)
-            else:
-                raise RuntimeError(
-                    "Could not sample separated tabletop asset poses within "
-                    f"{self.cfg.asset_spawn_max_attempts} attempts."
-                )
+        fixed_xy = torch.empty((num_reset_envs, 2), device=self.device)
+        held_xy = torch.empty_like(fixed_xy)
+        fixed_xy[:, 0].uniform_(x_min, x_max)
+        held_xy[:, 0].uniform_(x_min, x_max)
+
+        # Randomly put the small cube on one side of the robot and force the
+        # large cube onto the opposite side. Negative Y is left, positive Y
+        # is right; the center strip is never used.
+        held_on_left = torch.rand(num_reset_envs, device=self.device) < 0.5
+        held_y_magnitude = torch.empty(num_reset_envs, device=self.device).uniform_(
+            y_abs_min, y_abs_max
+        )
+        fixed_y_magnitude = torch.empty(num_reset_envs, device=self.device).uniform_(
+            y_abs_min, y_abs_max
+        )
+        held_xy[:, 1] = torch.where(
+            held_on_left, -held_y_magnitude, held_y_magnitude
+        )
+        fixed_xy[:, 1] = torch.where(
+            held_on_left, fixed_y_magnitude, -fixed_y_magnitude
+        )
+
         for asset in (self.fixed_asset, self.held_asset):
             root_state = asset.data.default_root_state[env_ids].clone()
-            if self.cfg.randomize_asset_poses:
-                sampled_xy = held_xy if asset is self.held_asset else fixed_xy
-                if sampled_xy is None:
-                    raise RuntimeError("Randomized asset poses were not initialized.")
-                root_state[:, :2] = sampled_xy
+            sampled_xy = held_xy if asset is self.held_asset else fixed_xy
+            root_state[:, :2] = sampled_xy
 
-                # Keep each cube flat on the table and randomize only its yaw.
-                yaw = torch.empty(num_reset_envs, device=self.device).uniform_(
-                    -torch.pi, torch.pi
-                )
-                root_state[:, 3] = torch.cos(yaw * 0.5)
-                root_state[:, 4:6] = 0.0
-                root_state[:, 6] = torch.sin(yaw * 0.5)
+            # Keep each cube flat on the table and randomize only its yaw.
+            yaw = torch.empty(num_reset_envs, device=self.device).uniform_(
+                -torch.pi, torch.pi
+            )
+            root_state[:, 3] = torch.cos(yaw * 0.5)
+            root_state[:, 4:6] = 0.0
+            root_state[:, 6] = torch.sin(yaw * 0.5)
             root_state[:, :3] += self.scene.env_origins[env_ids]
             asset.write_root_pose_to_sim(root_state[:, :7], env_ids=env_ids)
             asset.write_root_velocity_to_sim(root_state[:, 7:], env_ids=env_ids)
@@ -282,7 +281,9 @@ class SO101TaskVisualEnv(SO101TaskEnv):
         self.external_camera = self.scene["external_camera"]
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
-        state = SO101TaskEnv._get_observations(self)["state"]
+        # Keep visual observations deployable on the real robot: only encoder
+        # positions and camera images are observable outside simulation.
+        state = self.robot.data.joint_pos
         wrist_rgb = self.wrist_camera.data.output["rgb"].to(dtype=torch.float32) / 255.0
         external_rgb = self.external_camera.data.output["rgb"].to(dtype=torch.float32) / 255.0
         return {

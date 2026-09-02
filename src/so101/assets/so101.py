@@ -21,8 +21,8 @@ from .materials import spawn_so101_usd_with_color
 
 ASSET_DIR = Path(__file__).resolve().parent
 USD_DIR = ASSET_DIR / "usd"
-SO101_USD_PATH = USD_DIR / "SO-ARM101-USD-NO-CAMERA.usd"
-SO101_CAMERA_USD_PATH = USD_DIR / "SO-ARM101-USD-RIGHT-CAMERA.usd"
+SO101_USD_PATH = USD_DIR / "SO-ARM101-USD-RIGHT-CAMERA.usd"
+SO101_CAMERA_USD_PATH = SO101_USD_PATH
 
 SO101_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(

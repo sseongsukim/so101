@@ -51,8 +51,59 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import gymnasium as gym  # noqa: E402
+import torch  # noqa: E402
 import so101.tasks  # noqa: E402,F401  (registers environments)
 from so101.configs import make_env_cfg  # noqa: E402
+
+
+STATE_LAYOUT = (
+    ("held_cube_quat_w", 0, 4, "small cube quaternion (w, x, y, z)"),
+    ("held_cube_pos_w", 4, 7, "small cube world position (x, y, z)"),
+    ("target_cube_quat_w", 7, 11, "large cube quaternion (w, x, y, z)"),
+    ("target_cube_pos_w", 11, 14, "large cube world position (x, y, z)"),
+    ("target_minus_held_pos_w", 14, 17, "large-cube position minus small-cube position"),
+    ("grasp_midpoint_pos_w", 17, 20, "midpoint between the two fingertips"),
+    ("gripper_quat_w", 20, 24, "gripper quaternion (w, x, y, z)"),
+    ("joint_pos", 24, 30, "six joint positions in radians"),
+    ("joint_vel", 30, 36, "six joint velocities in radians/second"),
+)
+
+
+def print_observation_info(observations: dict[str, object], joint_names: list[str]) -> None:
+    """Print the keys, runtime shapes, and dtypes returned by the environment."""
+    print("[INFO] Observation entries:")
+    for name, value in observations.items():
+        if isinstance(value, torch.Tensor):
+            print(f"  - {name}: shape={tuple(value.shape)}, dtype={value.dtype}")
+        else:
+            shape = getattr(value, "shape", None)
+            dtype = getattr(value, "dtype", type(value).__name__)
+            print(f"  - {name}: shape={shape}, dtype={dtype}")
+
+    state = observations.get("state")
+    if not isinstance(state, torch.Tensor):
+        return
+
+    if state.shape[-1] == 6:
+        values = state[0].detach().cpu().tolist()
+        print("[INFO] 6-D deployable visual state (values shown for env_0):")
+        print(f"  - joint_pos: shape=(6,), values={values}")
+        print("      six joint positions in radians")
+        print(f"      joint order={joint_names}")
+        return
+    if state.shape[-1] != 36:
+        return
+
+    print("[INFO] 36-D state layout (values shown for env_0):")
+    for name, start, end, description in STATE_LAYOUT:
+        values = state[0, start:end].detach().cpu().tolist()
+        print(
+            f"  - state[{start:02d}:{end:02d}] {name}: "
+            f"shape=({end - start},), values={values}"
+        )
+        print(f"      {description}")
+        if name in ("joint_pos", "joint_vel"):
+            print(f"      joint order={joint_names}")
 
 
 def view_task() -> None:
@@ -63,7 +114,8 @@ def view_task() -> None:
         cfg=env_cfg,
         render_mode=None,
     )
-    ob = env.reset()
+    reset_result = env.reset()
+    observations = reset_result[0] if isinstance(reset_result, tuple) else reset_result
     print(f"[INFO] Loaded environment: {selected_task}")
     print("[INFO] Cubes are exact 2.5 cm and 4 cm Isaac Lab primitives.")
     action_dim = env.unwrapped.cfg.action_space
@@ -72,15 +124,16 @@ def view_task() -> None:
     print(f"[INFO] Observations contain one {state_dim}-D state tensor.")
     if args_cli.enable_cameras:
         print("[INFO] Camera observations: wrist_image and front_image (480x640 RGB).")
+    print_observation_info(observations, env.unwrapped.robot.joint_names)
 
     step_count = 0
     reset_every_steps = (
-        max(1, round(5.0 / env.unwrapped.step_dt))
+        max(1, round(2.0 / env.unwrapped.step_dt))
         if "StackCube" in selected_task
         else None
     )
     if reset_every_steps is not None:
-        print("[INFO] View-only StackCube pose reset interval: 5 seconds.")
+        print("[INFO] View-only StackCube pose reset interval: 2 seconds.")
     robot = env.unwrapped.robot
     hold_action = robot.data.default_joint_pos.clone()
     jaw_ids, jaw_names = robot.find_joints("Jaw")

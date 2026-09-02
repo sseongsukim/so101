@@ -87,8 +87,6 @@ class SO101StackCubeSceneCfg(SO101TaskSceneCfg):
         pos=(STAGING_X, STAGING_Y, ROBOT_BASE_BOTTOM_Z + SMALL_CUBE_SIZE / 2.0),
         color=(0.90, 0.25, 0.12),
     )
-
-
 @configclass
 class SO101VisualStackCubeSceneCfg(SO101StackCubeSceneCfg):
     """StackCube with camera hardware plus wrist and external RGB-D sensors."""

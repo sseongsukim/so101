@@ -5,8 +5,8 @@ SO-101 robot assets and real-robot interface helpers for Isaac Lab experiments.
 This repository intentionally does not copy the workshop task/environment. It
 keeps only the parts that are useful when building a custom Isaac Lab scene:
 
-- `so101.assets.SO101_CFG`: camera-free Isaac Lab `ArticulationCfg` using the
-  SO-101 USD with a black printed body.
+- `so101.assets.SO101_CFG`: Isaac Lab `ArticulationCfg` using the right-mounted
+  camera SO-101 USD with a black printed body.
 - `so101.real.interface.LeRobotSO101Interface`: LeRobot bridge utilities for
   mapping real SO-101 joint values to Isaac Lab radians and back.
 - `so101.real.control.SO101Control`: a small real-robot control wrapper with
@@ -81,26 +81,31 @@ and `configs/registry.py` maps every Gym task ID to its configuration class.
 These use Isaac Lab's dataclass-compatible `@configclass` so nested scene and
 simulation configurations retain `copy`, `replace`, and validation behavior.
 
-The registered Gymnasium tasks are `so101-StackCube-v0` (state-only,
-camera-free robot) and `so101-visual-StackCube-v0` (camera-equipped robot with
-wrist and external RGB-D sensors). Both use exact Isaac Lab cuboid primitives:
-a movable 2.5 cm cube and a movable 4 cm target cube.
+The registered Gymnasium tasks are `so101-StackCube-v0` (36-D simulator state)
+and `so101-visual-StackCube-v0` (six encoder positions plus wrist and external
+RGB observations). Both use the same right-mounted-camera robot USD and exact
+Isaac Lab cuboid primitives: a movable 2.5 cm cube and a movable 4 cm target
+cube. The visual task deliberately excludes simulator-only cube poses, EEF
+pose, and joint velocity so its observation can also be produced on the real
+robot. The state-only task does not create camera sensors or return images; the
+camera is merely part of the shared robot geometry.
 
 StackCube randomizes both cube poses on every episode reset. It samples the
-large cube first, then rejection-samples the small cube until their XY centers
-are at least 6 cm apart. Both centers use `x=0.22..0.30 m` and
-`y=-0.10..0.10 m`; each cube receives a random yaw while remaining flat on the
-tabletop.
+small cube on a random side and always places the large cube on the opposite
+side. Both centers use `x=0.20..0.40 m`; the left side is
+`y=-0.15..-0.055 m` and the right side is `y=0.055..0.15 m`. Each cube receives
+a random yaw while remaining flat on the tabletop.
 
 ```bash
 python scripts/view_task.py --task so101-StackCube-v0
 python scripts/view_task.py --task so101-visual-StackCube-v0
 ```
 
-StackCube instead returns the IsaacGym Franka cube-stack common state plus
-SO-101 joint state: cube-A quaternion (4), cube-A position (3), cube-A to
-cube-B position (3), end-effector position (3), end-effector quaternion (4),
-joint position (6), and joint velocity (6), for 29 dimensions.
+StackCube returns both cubes' absolute poses, their relative position, and the
+SO-101 state: small-cube quaternion (4) and position (3), large-cube quaternion
+(4) and position (3), large-minus-small position (3), end-effector position
+(3) and quaternion (4), joint position (6), and joint velocity (6), for 36
+dimensions.
 
 For StackCube, the EEF position is the midpoint of two explicit distal grasp
 points derived from the SO-101 colliders: one fixed to `/Robot/gripper` and one
@@ -134,6 +139,24 @@ lift-qualified success, filtered jaw-to-held contact force, lift height, and
 reach/target distances. Set `--print-every 1` to inspect every environment
 step, or `--rate 0` to disable wall-clock pacing. `TELEOP_PORT` and `TELEOP_ID`
 can be used instead of the corresponding command-line options.
+
+While teleoperating, press `t` to mark the last transition terminal, save the
+trajectory, and reset the environment. Press `r` to discard the current
+trajectory and reset without saving. Successful or time-limited episodes are
+also saved automatically. Files are pickle dictionaries under `outputs/teleop`
+by default (override with `--dataset-dir`) and contain NumPy arrays named
+`observations`, `actions`, `rewards`, `terminals`, `successes`, and
+`next_observations`. `terminals` includes both task termination and time
+limits, while `successes` records task success only. Every recorded transition
+prints its trajectory step, current simulated joint positions, and StackCube
+reward.
+
+Trajectory files use sequential names such as `trajectory_000000.pkl`. On
+startup, `teleop_task.py` scans `--dataset-dir` and continues at the next
+available index instead of overwriting existing data.
+
+Stationary leader-arm steps are excluded: a transition is recorded whenever at
+least one mapped leader joint value differs from the last stored action.
 
 The environment action is a six-dimensional absolute SO-101 joint-position
 target in radians, matching the Sim-to-Real SO-101 Workshop. The current
