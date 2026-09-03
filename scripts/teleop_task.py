@@ -250,12 +250,13 @@ def teleop_task() -> None:
 
         actions = env.unwrapped.robot.data.default_joint_pos.clone()
         last_recorded_action: torch.Tensor | None = None
+        collecting = True
         print(f"[INFO] Teleoperating {selected_task} with leader {args_cli.robot_id}")
         print(f"[INFO] Leader serial port: {args_cli.port}")
         print(f"[INFO] Dataset directory: {args_cli.dataset_dir.resolve()}")
         print(f"[INFO] Next trajectory index: {trajectory.next_index:06d}")
         print("[INFO] Recording only when a mapped leader joint value changes.")
-        print("[INFO] Keyboard: t = save episode, r = discard episode and reset.")
+        print("[INFO] Keyboard: t = save and pause, r = reset and resume collection.")
         print("[INFO] Automatic success/timeout resets are disabled for teleoperation.")
         print("[INFO] Press Ctrl+C or close the Isaac Sim window to stop.")
         print(
@@ -274,11 +275,10 @@ def teleop_task() -> None:
                         force_success=True,
                     )
                     if path is None:
-                        print("[DATA] Nothing to save; resetting environment.", flush=True)
+                        print("[DATA] Nothing to save.", flush=True)
                     else:
-                        print(f"[DATA] Saved {path}", flush=True)
-                    observation = _reset_observation(env)
-                    actions[:] = env.unwrapped.robot.data.default_joint_pos
+                        print(f"[DATA] Saved {path}; collection paused.", flush=True)
+                    collecting = False
                     last_recorded_action = None
                     continue
                 if key_command == CollectEnum.RESET:
@@ -286,8 +286,13 @@ def teleop_task() -> None:
                     trajectory.clear()
                     observation = _reset_observation(env)
                     actions[:] = env.unwrapped.robot.data.default_joint_pos
+                    collecting = True
                     last_recorded_action = None
-                    print(f"[DATA] Reset; discarded {discarded} transitions.", flush=True)
+                    print(
+                        f"[DATA] Reset; discarded {discarded} transitions and "
+                        "resumed collection.",
+                        flush=True,
+                    )
                     continue
 
                 leader_action = leader.robot.get_action()
@@ -299,7 +304,11 @@ def teleop_task() -> None:
                     _first_value(truncated, False)
                 )
                 success = bool(_first_value(info.get("success"), False))
-                if last_recorded_action is None:
+                if not collecting:
+                    # Keep following the leader so it can be returned to its
+                    # initial pose, but do not put that motion in the next episode.
+                    pass
+                elif last_recorded_action is None:
                     # Establish the stationary leader pose as the baseline;
                     # connecting or resetting alone must not create a sample.
                     last_recorded_action = actions.clone()
@@ -327,7 +336,7 @@ def teleop_task() -> None:
                         )
                 observation = next_observation
 
-                if done:
+                if collecting and done:
                     path = trajectory.save(
                         force_terminal=True, force_success=success
                     )

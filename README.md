@@ -92,7 +92,7 @@ camera is merely part of the shared robot geometry.
 
 StackCube randomizes both cube poses on every episode reset. It samples the
 small cube on a random side and always places the large cube on the opposite
-side. Both centers use `x=0.20..0.40 m`; the left side is
+side. Both centers use `x=0.20..0.30 m`; the left side is
 `y=-0.15..-0.055 m` and the right side is `y=0.055..0.15 m`. Each cube receives
 a random yaw while remaining flat on the tabletop.
 
@@ -140,11 +140,13 @@ reach/target distances. Set `--print-every 1` to inspect every environment
 step, or `--rate 0` to disable wall-clock pacing. `TELEOP_PORT` and `TELEOP_ID`
 can be used instead of the corresponding command-line options.
 
-While teleoperating, press `t` to mark the last transition terminal, save the
-trajectory, and reset the environment. Press `r` to discard the current
-trajectory and reset without saving. Automatic success and time-limit resets
-are disabled during teleoperation, so only these keyboard commands start a new
-episode. Files are pickle dictionaries under `outputs/teleop`
+While teleoperating, press `t` to mark the last transition successful and
+terminal, save the trajectory, and pause collection without resetting the
+environment. The simulated robot continues following the leader while paused,
+so returning the leader to its initial pose is not recorded. Press `r` to reset
+the environment and resume collection; any unsaved transitions are discarded.
+Automatic success and time-limit resets are disabled during teleoperation.
+Files are pickle dictionaries under `outputs/teleop`
 by default (override with `--dataset-dir`) and contain NumPy arrays named
 `observations`, `actions`, `rewards`, `terminals`, `successes`, and
 `next_observations`. `terminals` includes both task termination and time

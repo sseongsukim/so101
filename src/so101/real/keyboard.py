@@ -1,7 +1,7 @@
 """Reference: https://github.com/ARISE-Initiative/robosuite/blob/master/robosuite/devices/keyboard.py"""
 
-import gymnasium as gym
 import numpy as np
+from queue import Empty, SimpleQueue
 from pynput.keyboard import Key, Listener
 
 
@@ -31,6 +31,7 @@ class KeyboardInterface(object):
     intr_z_limit = (-15, 17)
 
     def __init__(self):
+        self._command_queue: SimpleQueue[CollectEnum] = SimpleQueue()
         self.reset()
 
         # Make a thread to listen to keyboard and register callback functions.
@@ -49,6 +50,11 @@ class KeyboardInterface(object):
 
         self.key_enum = CollectEnum.DONE_FALSE
 
+    def _queue_command(self, command: CollectEnum) -> None:
+        """Queue a command so the control loop cannot lose keyboard events."""
+        self.key_enum = command
+        self._command_queue.put(command)
+
     def on_press(self, k):
         try:
             k = k.char
@@ -66,20 +72,20 @@ class KeyboardInterface(object):
 
             # Data labelling and debugging.
             elif k == "t":
-                self.key_enum = CollectEnum.SUCCESS
+                self._queue_command(CollectEnum.SUCCESS)
             elif k.isdigit():
-                gym.logger.info(f"Reward pressed: {k}")
                 self.rew_key = int(k)
-                self.key_enum = CollectEnum.REWARD
+                self._queue_command(CollectEnum.REWARD)
+                print(f"[KEYBOARD] Reward pressed: {k}", flush=True)
             elif k == "y":
-                gym.logger.info("Skill complete pressed")
-                self.key_enum = CollectEnum.SKILL
+                self._queue_command(CollectEnum.SKILL)
+                print("[KEYBOARD] Skill complete pressed", flush=True)
             elif k == "r":
-                gym.logger.info("Reset pressed")
-                self.key_enum = CollectEnum.RESET
+                self._queue_command(CollectEnum.RESET)
+                print("[KEYBOARD] Reset pressed", flush=True)
             elif k == "b":
-                gym.logger.info("Undo pressed")
-                self.key_enum = CollectEnum.UNDO
+                self._queue_command(CollectEnum.UNDO)
+                print("[KEYBOARD] Undo pressed", flush=True)
         except AttributeError as e:
             pass
 
@@ -147,10 +153,11 @@ class KeyboardInterface(object):
             # Prevent becomming negative value.
             self.pos_delta = min(self.pos_delta, KeyboardInterface.MAX_POS_DELTA)
             self.rot_delta = min(self.rot_delta, KeyboardInterface.MAX_ROT_DELTA)
-        gym.logger.info(
+        print(
             "pose delta: {:.3f}, rotation delta: {:.3f}".format(
                 self.pos_delta, self.rot_delta
-            )
+            ),
+            flush=True,
         )
 
     def get_action(self, use_quat=True):
@@ -163,11 +170,15 @@ class KeyboardInterface(object):
         if use_quat:
             dquat = T.mat2quat(T.euler2mat(dori))
             # Use positive element for the first element of quaternion (ease of learning).
-            ret = np.concatenate([dpos, dquat, self.grasp]), self.key_enum, self.reward
+            action = np.concatenate([dpos, dquat, self.grasp])
         else:
-            ret = np.concatenate([dpos, dori, self.grasp]), self.key_enum, self.reward
+            action = np.concatenate([dpos, dori, self.grasp])
+        try:
+            command = self._command_queue.get_nowait()
+        except Empty:
+            command = CollectEnum.DONE_FALSE
         self.key_enum = CollectEnum.DONE_FALSE
-        return ret
+        return action, command, self.reward
 
     def print_usage(self):
         print("==============Keyboard Usage=================")

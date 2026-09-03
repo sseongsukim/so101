@@ -20,7 +20,7 @@ class SO101StackCubeEnvCfg(SO101TaskEnvCfg):
     task_name = "stack_cube"
     success_xy_threshold = 0.018
     success_height_threshold = 0.005
-    asset_spawn_x_range = (0.20, 0.35)
+    asset_spawn_x_range = (0.20, 0.30)
     asset_spawn_y_abs_range = (0.055, 0.15)
     stack_distance_gain = 20.0
     stack_lift_clearance = 0.02
