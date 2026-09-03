@@ -130,15 +130,12 @@ absolute simulation joint targets:
 lerobot-calibrate --teleop.type=so101_leader \
     --teleop.port=/dev/ttyACM0 --teleop.id=leader_arm_1
 
-python scripts/teleop_task.py so101-StackCube-v0 --print-every 1
+python scripts/teleop_task.py so101-StackCube-v0
 ```
 
-The default control-rate cap is 30 Hz and diagnostics are printed every 30
-steps. Each line reports total reward, reward phase, geometric and
-lift-qualified success, filtered jaw-to-held contact force, lift height, and
-reach/target distances. Set `--print-every 1` to inspect every environment
-step, or `--rate 0` to disable wall-clock pacing. `TELEOP_PORT` and `TELEOP_ID`
-can be used instead of the corresponding command-line options.
+The default control-rate cap is 30 Hz. Use `--rate 0` to disable wall-clock
+pacing. `TELEOP_PORT` and `TELEOP_ID` can be used instead of the corresponding
+command-line options.
 
 While teleoperating, press `t` to mark the last transition successful and
 terminal, save the trajectory, and pause collection without resetting the

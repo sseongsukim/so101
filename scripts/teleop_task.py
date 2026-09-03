@@ -49,12 +49,6 @@ parser.add_argument(
     help="LeRobot calibration ID of the leader arm.",
 )
 parser.add_argument(
-    "--print-every",
-    type=int,
-    default=30,
-    help="Print diagnostics every N environment steps (default: 30).",
-)
-parser.add_argument(
     "--rate",
     type=float,
     default=30.0,
@@ -72,8 +66,6 @@ args_cli = parser.parse_args()
 selected_task = args_cli.task_option or args_cli.task_name
 if selected_task is None:
     parser.error("a task name is required (positional or via --task)")
-if args_cli.print_every < 1:
-    parser.error("--print-every must be at least 1")
 if args_cli.rate < 0.0:
     parser.error("--rate must be non-negative")
 args_cli.enable_cameras = False
@@ -194,32 +186,6 @@ def _first_value(value: Any, default: Any = None) -> Any:
     return value
 
 
-def _print_diagnostics(step: int, reward: torch.Tensor, info: dict[str, Any]) -> None:
-    """Print reward, success, and filtered jaw-to-held contact diagnostics."""
-    reward_value = float(_first_value(reward, 0.0))
-    phase = int(_first_value(info.get("reward_phase"), 0))
-    success = bool(_first_value(info.get("success"), False))
-    reward_success = float(_first_value(info.get("reward_success"), 0.0))
-    contact = bool(_first_value(info.get("jaw_contact"), False))
-    contact_force = float(_first_value(info.get("jaw_contact_force"), 0.0))
-    lift_height = float(_first_value(info.get("lift_height"), 0.0))
-    has_lifted = bool(_first_value(info.get("has_lifted"), False))
-    reach_distance = float(_first_value(info.get("reach_distance"), float("nan")))
-    target_distance = float(
-        _first_value(info.get("held_target_distance"), float("nan"))
-    )
-
-    print(
-        f"[TELEOP] step={step:06d} reward={reward_value:7.4f} phase={phase} "
-        f"success={success} reward_success={reward_success:.0f} "
-        f"jaw_contact={contact} contact_force={contact_force:7.3f}N "
-        f"lift={lift_height * 1000.0:7.2f}mm has_lifted={has_lifted} "
-        f"reach_dist={reach_distance * 1000.0:7.2f}mm "
-        f"target_dist={target_distance * 1000.0:7.2f}mm",
-        flush=True,
-    )
-
-
 def teleop_task() -> None:
     env_cfg = make_env_cfg(selected_task, num_envs=1, device=args_cli.device)
     # Data collection episodes end only through the keyboard. Isaac Lab resets
@@ -259,11 +225,7 @@ def teleop_task() -> None:
         print("[INFO] Keyboard: t = save and pause, r = reset and resume collection.")
         print("[INFO] Automatic success/timeout resets are disabled for teleoperation.")
         print("[INFO] Press Ctrl+C or close the Isaac Sim window to stop.")
-        print(
-            "[INFO] Diagnostics: reward/phase/success and jaw-to-held contact/lift/target distance."
-        )
 
-        step = 0
         control_period = 1.0 / args_cli.rate if args_cli.rate > 0.0 else 0.0
         while simulation_app.is_running():
             step_started = time.perf_counter()
@@ -348,10 +310,6 @@ def teleop_task() -> None:
                     else:
                         print(f"[DATA] Episode ended; saved {path}", flush=True)
                     last_recorded_action = None
-
-            step += 1
-            if step == 1 or step % args_cli.print_every == 0:
-                _print_diagnostics(step, reward, info)
 
             remaining = control_period - (time.perf_counter() - step_started)
             if remaining > 0.0:
