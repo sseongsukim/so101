@@ -222,6 +222,11 @@ def _print_diagnostics(step: int, reward: torch.Tensor, info: dict[str, Any]) ->
 
 def teleop_task() -> None:
     env_cfg = make_env_cfg(selected_task, num_envs=1, device=args_cli.device)
+    # Data collection episodes end only through the keyboard. Isaac Lab resets
+    # environments internally whenever terminated or truncated is returned, so
+    # suppress both signals for teleoperation while retaining success in info.
+    env_cfg.terminate_on_success = False
+    env_cfg.truncate_on_timeout = False
 
     env = gym.make(selected_task, cfg=env_cfg, render_mode=None)
     leader = LeRobotSO101Interface(
@@ -251,6 +256,7 @@ def teleop_task() -> None:
         print(f"[INFO] Next trajectory index: {trajectory.next_index:06d}")
         print("[INFO] Recording only when a mapped leader joint value changes.")
         print("[INFO] Keyboard: t = save episode, r = discard episode and reset.")
+        print("[INFO] Automatic success/timeout resets are disabled for teleoperation.")
         print("[INFO] Press Ctrl+C or close the Isaac Sim window to stop.")
         print(
             "[INFO] Diagnostics: reward/phase/success and jaw-to-held contact/lift/target distance."
@@ -292,7 +298,7 @@ def teleop_task() -> None:
                 done = bool(_first_value(terminated, False)) or bool(
                     _first_value(truncated, False)
                 )
-                success = bool(_first_value(terminated, False))
+                success = bool(_first_value(info.get("success"), False))
                 if last_recorded_action is None:
                     # Establish the stationary leader pose as the baseline;
                     # connecting or resetting alone must not create a sample.

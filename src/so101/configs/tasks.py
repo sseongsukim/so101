@@ -18,7 +18,7 @@ class SO101StackCubeEnvCfg(SO101TaskEnvCfg):
     state_space = 0
     episode_length_s = STACK_CUBE_EPISODE_LENGTH_S
     task_name = "stack_cube"
-    success_xy_threshold = 0.01
+    success_xy_threshold = 0.018
     success_height_threshold = 0.005
     asset_spawn_x_range = (0.20, 0.35)
     asset_spawn_y_abs_range = (0.055, 0.15)

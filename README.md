@@ -142,8 +142,9 @@ can be used instead of the corresponding command-line options.
 
 While teleoperating, press `t` to mark the last transition terminal, save the
 trajectory, and reset the environment. Press `r` to discard the current
-trajectory and reset without saving. Successful or time-limited episodes are
-also saved automatically. Files are pickle dictionaries under `outputs/teleop`
+trajectory and reset without saving. Automatic success and time-limit resets
+are disabled during teleoperation, so only these keyboard commands start a new
+episode. Files are pickle dictionaries under `outputs/teleop`
 by default (override with `--dataset-dir`) and contain NumPy arrays named
 `observations`, `actions`, `rewards`, `terminals`, `successes`, and
 `next_observations`. `terminals` includes both task termination and time

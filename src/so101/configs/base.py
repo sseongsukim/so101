@@ -20,7 +20,7 @@ class SO101TaskEnvCfg(DirectRLEnvCfg):
     state_space = 0
 
     viewer = ViewerCfg(
-        eye=(0.0, 0.0, 0.65),
+        eye=(0.0, 0.25, 0.45),
         lookat=(0.30, 0.0, 0.0),
         resolution=(1280, 720),
         origin_type="env",
@@ -30,6 +30,8 @@ class SO101TaskEnvCfg(DirectRLEnvCfg):
     task_name: str = "stack_cube"
     success_xy_threshold: float = 0.01
     success_height_threshold: float = 0.005
+    terminate_on_success: bool = True
+    truncate_on_timeout: bool = True
 
     asset_spawn_x_range: tuple[float, float] = (0.0, 0.0)
     asset_spawn_y_abs_range: tuple[float, float] = (0.0, 0.0)

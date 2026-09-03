@@ -144,9 +144,11 @@ class SO101TaskEnv(DirectRLEnv):
         dist_reward = torch.maximum(dist_reward, align_reward)
 
         target_height = cube_b_size + cube_a_size / 2.0
-        cube_a_align_cube_b = (
-            torch.linalg.vector_norm(cube_a_to_cube_b[:, :2], dim=-1)
-            < self.cfg.success_xy_threshold
+        # The support surface is square, so check each horizontal axis rather
+        # than using a circular XY-distance threshold.
+        cube_a_align_cube_b = torch.all(
+            torch.abs(cube_a_to_cube_b[:, :2]) < self.cfg.success_xy_threshold,
+            dim=-1,
         )
         cube_a_on_cube_b = (
             torch.abs(cube_a_height - target_height)
@@ -194,8 +196,16 @@ class SO101TaskEnv(DirectRLEnv):
         self._successes = self._step_stack_cube_metrics["stack_success"]
         self.extras["success"] = self._successes
         self.extras["successes"] = self._successes.float().mean()
-        terminated = self._successes
-        time_out = self.episode_length_buf >= self.max_episode_length - 1
+        terminated = (
+            self._successes
+            if self.cfg.terminate_on_success
+            else torch.zeros_like(self._successes)
+        )
+        time_out = (
+            self.episode_length_buf >= self.max_episode_length - 1
+            if self.cfg.truncate_on_timeout
+            else torch.zeros_like(self._successes)
+        )
         # Prefer task termination when success occurs on the final allowed
         # step. This keeps terminal and time-limit transitions unambiguous for
         # both on-policy rollouts and off-policy replay buffers.
