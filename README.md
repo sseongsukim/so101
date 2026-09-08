@@ -204,3 +204,162 @@ ROBOT_PORT=/dev/ttyACM0 ROBOT_ID=follower_arm_1 so101-check-calibration
 The SO-101 USD, Isaac Lab robot config, and LeRobot/real-robot helper code were
 adapted from `reference/Sim-to-Real-SO-101-Workshop`. Files copied from that
 workshop keep their original Apache-2.0 SPDX headers.
+
+## 모방학습 (state FBC / DBC)
+
+`main.py`는 MjDex와 동일하게 `absl.flags`, `ml_collections.ConfigDict`,
+`--agent=agents/fbc.py` 설정 파일, W&B 및 CSV 로깅을 사용합니다.
+수집한 state 데이터로 offline 학습하고, `eval_interval`마다 Isaac Sim rollout으로 평가합니다.
+Validation 데이터 분할은 사용하지 않습니다.
+
+```bash
+cd research/so101
+python -m pip install -e '.[learning]'
+python main.py --env_name=so101-StackCube-v0 --agent=agents/fbc.py \
+  --offline_steps=2000000 --wandb_mode=offline
+# DBC: --agent=agents/dbc.py
+# 설정 변경: --agent.batch_size=256 --agent.horizon_steps=24
+```
+
+평가를 실행하려면 Isaac Lab/Isaac Sim과 learning 의존성이 같은 Python 환경에서
+사용 가능해야 합니다. JAX의 GPU 지원은 실행 환경에 맞게 설치하세요.
+`--eval_interval=0`이면 Isaac Sim을 실행하지 않고 학습만 진행합니다.
+`data/<env_name>.pkl`의 transition dictionary를 직접 읽습니다. 데이터 루트는
+`--dataset_dir`로 지정합니다. 개별 `trajectory_*.pkl`은 미리 병합해 사용합니다.
+입력 pickle은 로컬의 신뢰하는 수집 데이터여야 합니다.
+
+모든 에피소드를 학습에 사용하며, 전체 학습 데이터로 정규화 통계를 계산합니다.
+MjDex의 `FrozenDict` 기반 `Dataset`/`MultistepDataset`을 그대로 사용합니다.
+정규화 후 `dataset_class[config["dataset_class"]].create(**train_dataset)`로 생성하고,
+`pred_horizon`을 설정합니다. 각 sample은 현재 state와
+미래 `horizon_steps`개의 action으로 구성하며, 에피소드 끝에서는 마지막 action을 반복합니다.
+이미지를 포함하는 multimodal 학습은 이 runner에서 지원하지 않습니다.
+
+### Observation 분석 및 정규화
+
+`SO101TaskEnv._get_observations()`의 36차원 state 순서는 다음과 같습니다.
+슬라이스는 Python의 끝 인덱스 제외 표기입니다.
+
+| 슬라이스 | 값 | 정규화 |
+| --- | --- | --- |
+| `0:4` | 이동 큐브 quaternion | 그대로 유지 |
+| `4:7` | 이동 큐브 월드 위치 | 평균/표준편차 |
+| `7:11` | 고정 큐브 quaternion | 그대로 유지 |
+| `11:14` | 고정 큐브 월드 위치 | 평균/표준편차 |
+| `14:17` | 큐브 간 상대 위치 | 평균/표준편차 |
+| `17:20` | gripper grasp 위치 | 평균/표준편차 |
+| `20:24` | end-effector quaternion | 그대로 유지 |
+| `24:30` | 관절 위치 (rad) | 평균/표준편차 |
+| `30:36` | 관절 속도 (rad/s) | 평균/표준편차 |
+
+현재 병합 데이터는 250개 에피소드, 31,100개 transition입니다. 위치는 대략
+수십 cm 범위인데 관절 속도는 약 -86~80 rad/s까지 나타나므로 state 정규화를
+기본으로 사용합니다. 표준편차가 `1e-3` 미만인 거의 고정된 성분은 scale=1로
+두어 미세한 잡음을 증폭하지 않습니다. Quaternion은 단위 회전 표현이고 각
+성분이 이미 [-1, 1] 범위이므로 그대로 둡니다. 이 전처리는 별도의 CLI 옵션 없이
+`Normalizer.fit()`에 고정되어 있습니다.
+
+Visual 환경의 state는 관절 위치 6차원뿐이므로 이 경우 6개 모두 표준화합니다.
+수집 스크립트는 `observation['state']`만 저장하므로 카메라 이미지는 pickle에
+들어가지 않습니다. 6차원 state만으로는 물체 위치를 알 수 없어 임의의 물체 배치에
+대응하는 정책을 학습하기 어렵습니다. 36차원 정책의 실제 로봇 배포에는 물체 및
+end-effector pose 추정도 필요합니다.
+
+현재 수집은 leader 관절 값이 바뀔 때만 transition을 저장하므로 action chunk의
+한 칸은 고정 1/30초가 아니라 다음 저장 sample을 뜻합니다. 고정 주기 chunk 실행이
+필요하면 수집 주기 및 timestamp 처리도 맞춰야 합니다. 또한 월드 위치를 사용하므로
+여러 병렬 환경의 데이터는 환경 origin을 빼는 전처리가 별도로 필요합니다.
+
+### Action 및 추론
+
+Action은 6개 관절의 절대 목표 각도(rad)입니다. 관절별 학습 데이터 min/max를
+사용해 `2 * (a - min) / (max - min) - 1`로 정규화합니다. 고정된 관절은 0으로
+매핑합니다. 환경 설정의 `action_space=6`은 차원 선언이므로 물리적 관절 한계로
+사용하지 않습니다.
+
+각 run의 `normalization.json`에 정규화 통계를 저장합니다. 추론 시 같은 통계를
+사용하고, 정책 출력을 rad로 역변환한 뒤 환경에 전달해야 합니다.
+
+```python
+import numpy as np
+from utils.datasets import Normalizer
+
+normalizer = Normalizer.load(f'{run_dir}/normalization.json')
+# state: CPU numpy array, shape (36,) or (batch, 36)
+observations = normalizer.normalize_observations(state)
+action_chunk = agent.sample_actions(observations, rng=key)
+action_chunk_rad = normalizer.unnormalize_actions(np.asarray(action_chunk))
+# 첫 action만 실행한다면 action_chunk_rad[0, 0]을 사용 (단일 환경).
+```
+
+### 로그, 저장, 복원
+
+결과는 `exp/<env_name>/<agent_name>/<exp_name>/`에 저장됩니다.
+`flags.json`, `agent_config.json`, `normalization.json`,
+`train.csv`, `eval.csv`, `params_<step>.pkl`을 기록합니다.
+W&B group 기본값은 `{run_group}/{env_name}/{agent_name}`이며 `--wandb_group`으로
+덮어쓸 수 있습니다. 주요 metric은 MjDex 형식의 `training/*`,
+`time/epoch_time`, `time/total_time`, `train_step`입니다.
+
+MjDex와 동일하게 `log_interval`마다 로그를 기록하고, `save_interval`마다
+체크포인트를 저장합니다.
+
+```bash
+python main.py --agent=agents/fbc.py --offline_steps=2000000 \
+  --restore_path=exp/so101-StackCube-v0/fbc/<previous_run> \
+  --restore_epoch=1000000
+```
+
+복원 시 저장된 agent(optimizer 및 agent RNG 포함)와 정규화 통계를 불러옵니다.
+MjDex와 동일하게 학습 루프는 1부터 시작해 `offline_steps`번 업데이트하며,
+로그와 체크포인트 번호도 새 run 기준입니다. 학습률 schedule은 현재 config로
+생성하고 optimizer 상태는 복원하므로, 이어서 학습할 때는 원래 agent 설정과
+총 step 수를 고려해야 합니다. 데이터 sampling RNG는 seed에서 시작합니다.
+
+
+
+### 환경 rollout 평가
+
+학습 유틸리티는 저장소 루트의 `utils/`에 있습니다. `utils/env_utils.py`는
+`teleop_task.py`처럼 AppLauncher를 먼저 실행한 뒤 task를 등록하고,
+`make_env_cfg(..., num_envs=num_envs)`와 `gym.make(..., render_mode=None)`로 환경을
+만듭니다. 수집 환경과 동일하게 카메라와 자동 success/timeout reset을 끕니다.
+평가는 `--num_envs`개 환경에서 **에피소드 하나씩을 한 번의 배치 rollout으로**
+동시에 굴립니다. 환경마다 성공 시점이 다르므로 종료된 환경은 mask로 집계를
+동결하고, 전부 끝나거나 `max_episode_length`에 도달하면 rollout이 끝납니다.
+길이는 환경의 `episode_length_s / step_dt`로 결정됩니다. Isaac Lab의 GPU
+step 비용은 환경 수에 거의 무관해서(1개 26.5 ms vs 256개 27.4 ms), 환경을
+늘려도 벽시계 시간은 사실상 그대로입니다. 관측 위치는 각 환경 원점 기준으로
+보고되므로 `num_envs`를 바꿔도 정책이 보는 값의 분포는 동일합니다.
+
+```bash
+python main.py --agent=agents/fbc.py --eval_interval=250000 \
+  --num_envs=50 --device=cuda:0 --headless
+```
+
+물리 시간 간격은 기존 환경 설정 그대로 `dt=1/120`, `decimation=4`입니다.
+정책 action 하나마다 `env.step()`을 정확히 한 번 호출하므로 시뮬레이션에서는
+30 Hz로 제어합니다. 예측 chunk의 앞 `agent.inference_steps`개 action을 한 개씩
+실행한 후 현재 observation으로 다시 예측합니다. action을 여러 환경 step 동안
+반복하거나 한 step에 여러 action을 실행하지 않습니다.
+
+실제 시간도 teleop 코드처럼 매 제어 iteration의 추론·환경 실행 시간을 뺀
+나머지만 sleep해서 환경의 `step_dt`에 맞춥니다. 현재 환경에서는 1/30초이며,
+평가 길이와 제어 주기를 `main.py` flag로 별도 지정하지 않습니다. 첫 JIT 컴파일은 제어 시간 측정 전에
+실행합니다. 추론이나 물리 계산이 1/30초보다 오래 걸리면 실제 속도는 낮아집니다.
+`evaluation/control_time`은 sleep을 포함한 평균 실제 제어 시간을 기록합니다.
+
+기존 pickle은 명령이 바뀐 시점만 저장하며 timestamp/정지 지속시간을 포함하지
+않습니다. 따라서 수집 당시 생략된 정지 구간까지 정확히 재현할 수는 없습니다.
+현재 평가는 연속된 저장 action 사이를 한 제어 tick으로 해석하고 수집 코드의
+환경의 기본 30 Hz를 적용합니다.
+
+평가 전 observation에 학습 통계를 적용하고, 예측 action은 rad로 역변환해서
+환경에 전달합니다. W&B와 `eval.csv`에는 `evaluation/return`, `evaluation/length`,
+`evaluation/success`(에피소드 성공률), `evaluation/control_time`을 기록합니다.
+
+현재 `data/so101-StackCube-v0.pkl`의 에피소드 길이 통계는 250개 에피소드,
+총 31,100 step, 평균 124.4 step, 중앙값 119 step, 최소 75 step, 최대 238 step입니다.
+개별 trajectory 파일 250개의 통계도 동일합니다. 이는 저장된 transition 수이며,
+정지 중 생략된 제어 tick은 포함하지 않습니다. 현재 StackCube의 환경 정의는
+`src/so101/configs/tasks.py`의 `STACK_CUBE_MAX_EPISODE_STEPS = 350`입니다.

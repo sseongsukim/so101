@@ -72,11 +72,19 @@ class SO101TaskEnv(DirectRLEnv):
         self.robot.set_joint_position_target(self._joint_targets)
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
-        cube_a_pos = self.held_asset.data.root_pos_w
+        # Report positions relative to each environment's origin. The scene
+        # clones environments on a grid, so root_pos_w carries an env-dependent
+        # offset (env_spacing metres apart) that would put every env but the
+        # first outside the spawn ranges the policy was trained on. Rotations
+        # and joint states need no correction, and env_origins is exactly zero
+        # for num_envs=1, so single-env observations are unchanged.
+        env_origins = self.scene.env_origins
+        cube_a_pos = self.held_asset.data.root_pos_w - env_origins
         cube_a_quat = self.held_asset.data.root_quat_w
-        cube_b_pos = self.fixed_asset.data.root_pos_w
+        cube_b_pos = self.fixed_asset.data.root_pos_w - env_origins
         cube_b_quat = self.fixed_asset.data.root_quat_w
         ee_pos, _, _ = self._get_grasp_points()
+        ee_pos = ee_pos - env_origins
         ee_quat = self.robot.data.body_quat_w[:, self._ee_body_idx]
         state = torch.cat(
             (
@@ -155,14 +163,17 @@ class SO101TaskEnv(DirectRLEnv):
             < self.cfg.success_height_threshold
         )
         gripper_away_from_cube_a = d > self.cfg.stack_gripper_away_threshold
-        stack_success = torch.logical_and(
-            torch.logical_and(cube_a_align_cube_b, cube_a_on_cube_b),
-            gripper_away_from_cube_a,
-        )
+        # The cube is stacked once it is aligned and resting at the right
+        # height. Full task success additionally requires retracting the
+        # gripper, so tracking the two separately shows whether a failure was
+        # in the stacking itself or only in letting go.
+        cube_a_stacked = torch.logical_and(cube_a_align_cube_b, cube_a_on_cube_b)
+        stack_success = torch.logical_and(cube_a_stacked, gripper_away_from_cube_a)
         return {
             "dist_reward": dist_reward,
             "lift_reward": cube_a_lifted.float(),
             "align_reward": align_reward,
+            "stacked": cube_a_stacked,
             "stack_success": stack_success,
             "eef_cube_distance": d,
             "cube_target_distance": d_ab,
@@ -196,6 +207,11 @@ class SO101TaskEnv(DirectRLEnv):
         self._successes = self._step_stack_cube_metrics["stack_success"]
         self.extras["success"] = self._successes
         self.extras["successes"] = self._successes.float().mean()
+        # Stacking without the gripper-away requirement, so evaluation can
+        # separate "never stacked" from "stacked but stayed on the cube".
+        stacked = self._step_stack_cube_metrics["stacked"]
+        self.extras["stacked"] = stacked
+        self.extras["stackeds"] = stacked.float().mean()
         terminated = (
             self._successes
             if self.cfg.terminate_on_success

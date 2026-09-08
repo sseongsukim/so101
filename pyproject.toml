@@ -17,6 +17,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+learning = [
+    "absl-py",
+    "flax",
+    "jax",
+    "ml-collections",
+    "numpy",
+    "optax",
+    "tqdm",
+    "wandb",
+]
 real = [
     "draccus",
     "lerobot",
