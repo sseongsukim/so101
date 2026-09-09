@@ -363,3 +363,31 @@ python main.py --agent=agents/fbc.py --eval_interval=250000 \
 개별 trajectory 파일 250개의 통계도 동일합니다. 이는 저장된 transition 수이며,
 정지 중 생략된 제어 tick은 포함하지 않습니다. 현재 StackCube의 환경 정의는
 `src/so101/configs/tasks.py`의 `STACK_CUBE_MAX_EPISODE_STEPS = 350`입니다.
+
+### 학습된 체크포인트 평가 (`inference.py`)
+
+`inference.py`는 학습 없이 저장된 파라미터만 불러와 `utils/evaluation.py`의
+`evaluate`를 그대로 실행하고, 결과를 W&B와 CSV로 남깁니다. MjDex의
+`inference.py`와 같은 구조입니다.
+
+```bash
+python inference.py \
+  --restore_path=exp/so101-StackCube-v0/fbc/fbc_sd042_20260908_224023 \
+  --restore_epoch=2000000 --num_envs=50 --video_envs=4 --num_runs=3 --wandb_mode=online
+```
+
+`agent_config.json`에서 agent 설정을, `flags.json`에서 `env_name`을 읽으므로
+`--agent` 설정 파일을 다시 지정하지 않습니다(`--env_name`으로 덮어쓸 수 있습니다).
+정규화 통계는 데이터셋이 아니라 체크포인트의 `normalization.json`에서 불러오므로
+학습 때와 동일한 입출력 scaling이 유지되고, 학습 데이터 pickle은 필요하지 않습니다.
+agent 재구성에는 shape만 필요해서 example transition은 정규화 통계의 차원과
+`horizon_steps`로 만듭니다.
+
+`--num_runs`는 `--num_envs`개 에피소드 평가를 초기 상태와 sampling noise가 다른
+상태로 여러 번 반복합니다(각 run seed는 `--seed`에서 재현 가능하게 파생).
+run별 metric은 `evaluation/*`로 step=run index에 기록하고, 2회 이상이면
+`evaluation_mean/*`, `evaluation_std/*`를 추가로 기록합니다.
+`--video_envs > 0`이면 rollout 영상을 `evaluation/video`로 올립니다.
+결과는 `exp/eval/<env_name>/<agent_name>/<exp_name>/`에 `flags.json`, `eval.csv`,
+(2회 이상일 때) `eval_summary.json`으로 저장합니다. 집계값은 `CsvLogger`의 header가
+첫 run 행에서 고정되기 때문에 CSV가 아니라 JSON으로 남깁니다.
