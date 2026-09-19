@@ -13,7 +13,7 @@ from so101.scenes.tabletop import (
     SO101TabletopSceneCfg,
     WRIST_CAMERA_OFFSET_POS,
     WRIST_CAMERA_OFFSET_ROT,
-    camera_cfg,
+    calibrated_camera_cfg,
 )
 
 from .assets import (
@@ -97,12 +97,14 @@ class SO101VisualStackCubeSceneCfg(SO101StackCubeSceneCfg):
             joint_pos=STACK_CUBE_DEFAULT_JOINT_POS
         ),
     )
-    wrist_camera = camera_cfg(
+    wrist_camera = calibrated_camera_cfg(
+        "wrist",
         "{ENV_REGEX_NS}/Robot/gripper/gripper_cam",
         WRIST_CAMERA_OFFSET_POS,
         WRIST_CAMERA_OFFSET_ROT,
     )
-    external_camera = camera_cfg(
+    external_camera = calibrated_camera_cfg(
+        "front",
         "{ENV_REGEX_NS}/ExternalCamera",
         EXTERNAL_CAMERA_POS,
         EXTERNAL_CAMERA_ROT,
