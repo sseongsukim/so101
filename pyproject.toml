@@ -32,7 +32,13 @@ real = [
     "lerobot",
     "matplotlib",
     "numpy",
+    # cv2.aruco is present in the headless wheel, so opencv-contrib is not
+    # needed.  Headless matches what lerobot pulls in; it has no GUI, so
+    # scripts/view_cameras.py falls back to writing frames unless a desktop
+    # build of opencv-python is installed instead.
+    "opencv-python-headless",
     "pynput",
+    "pyyaml",
     "rerun-sdk",
     "torch",
 ]

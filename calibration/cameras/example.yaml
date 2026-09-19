@@ -1,0 +1,28 @@
+name: front
+device: /dev/video6
+resolution: [640, 480]
+fps: 30
+K:
+- [600.0, 0.0, 322.4]
+- [0.0, 601.2, 238.7]
+- [0.0, 0.0, 1.0]
+dist: [-0.052, 0.014, 0.0003, -0.0002, 0.0]
+K_virtual:
+- [560.0, 0.0, 320.0]
+- [0.0, 560.0, 240.0]
+- [0.0, 0.0, 1.0]
+alpha: 0.0
+extrinsic:
+  parent: base
+  convention: ros
+  pos: [0.62, -0.5, 0.42]
+  quat_wxyz: [0.8254465, 0.4737144, 0.1527951, 0.2662452]
+exposure:
+  auto_exposure: 1
+  exposure_time_absolute: 10000
+  unsupported_controls: [white_balance_automatic]
+calib_rms_px: 0.21
+handeye_rmse_px: 1.8
+hfov_loss_frac: 0.06
+date: '2026-01-01'
+notes: PLACEHOLDER - illustrative numbers only, not a real calibration.
