@@ -215,6 +215,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Machine-specific SO-101 motor calibration data.
+calibration/
+
 # PyPI configuration file
 .pypirc
 

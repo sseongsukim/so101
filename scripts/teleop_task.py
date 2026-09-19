@@ -20,6 +20,8 @@ from isaaclab.app import AppLauncher
 TASK_NAMES = (
     "so101-StackCube-v0",
 )
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_LEADER_CALIBRATION_DIR = REPO_ROOT / "calibration/teleoperators/so_leader"
 
 parser = argparse.ArgumentParser(
     description="Teleoperate an SO-101 task with a physical SO-101 leader arm."
@@ -40,13 +42,19 @@ parser.add_argument(
 )
 parser.add_argument(
     "--port",
-    default=os.getenv("TELEOP_PORT", "/dev/ttyACM0"),
+    default=os.getenv("TELEOP_PORT", "/dev/so101-leader"),
     help="Serial port of the SO-101 leader arm.",
 )
 parser.add_argument(
     "--robot-id",
     default="my_leader",
     help="LeRobot calibration ID of the leader arm.",
+)
+parser.add_argument(
+    "--calibration-dir",
+    type=Path,
+    default=DEFAULT_LEADER_CALIBRATION_DIR,
+    help="Directory containing the leader calibration JSON.",
 )
 parser.add_argument(
     "--rate",
@@ -202,6 +210,7 @@ def teleop_task() -> None:
         cameras={},
         fps=30,
         kind="leader",
+        calibration_dir=args_cli.calibration_dir,
     )
     leader_connected = False
     keyboard: KeyboardInterface | None = None

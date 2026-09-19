@@ -14,6 +14,7 @@
 # limitations under the License.
 import uuid
 from collections import deque
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -26,20 +27,7 @@ except ImportError:
     from lerobot.robots.so101_follower import SO101FollowerConfig
 
 from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.robots import make_robot_from_config
-from lerobot.processor import make_default_processors
-from lerobot.datasets.pipeline_features import (
-    aggregate_pipeline_dataset_features,
-    create_initial_features,
-)
-from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts
-from lerobot.utils.constants import OBS_STR
-from lerobot.utils.control_utils import predict_action
-from lerobot.utils.utils import get_safe_torch_device
-from lerobot.policies.utils import make_robot_action
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 try:
     # LeRobot >= 0.4 separates physical teleoperators from robot devices.
@@ -70,6 +58,7 @@ class LeRobotSO101Interface:
         fps: int,
         kind: str = "leader",
         rename_map: dict = None,
+        calibration_dir: str | Path | None = None,
     ):
 
         self.port = port
@@ -79,6 +68,9 @@ class LeRobotSO101Interface:
         self.fps = fps
         self.kind = kind
         self.rename_map = rename_map
+        self.calibration_dir = (
+            Path(calibration_dir).expanduser() if calibration_dir is not None else None
+        )
 
         self.joint_names = [joint.split(".")[0] for joint in self.SO101_JOINT_ORDER]
         self.joint_mins = torch.tensor(
@@ -114,12 +106,26 @@ class LeRobotSO101Interface:
                 # LeRobot >= 0.4 defaults body joints to degrees, while the
                 # workshop mapping below expects calibrated [-100, 100]
                 # values (and [0, 100] for the gripper).
-                return SO101LeaderConfig(port=self.port, id=self.id, use_degrees=False)
+                return SO101LeaderConfig(
+                    port=self.port,
+                    id=self.id,
+                    use_degrees=False,
+                    calibration_dir=self.calibration_dir,
+                )
             except TypeError:
-                return SO101LeaderConfig(port=self.port, id=self.id)
+                return SO101LeaderConfig(
+                    port=self.port,
+                    id=self.id,
+                    calibration_dir=self.calibration_dir,
+                )
         elif self.kind == "follower":
             cameras = self.make_cameras_cfg()
-            return SO101FollowerConfig(port=self.port, id=self.id, cameras=cameras)
+            return SO101FollowerConfig(
+                port=self.port,
+                id=self.id,
+                cameras=cameras,
+                calibration_dir=self.calibration_dir,
+            )
         raise ValueError(f"Unsupported SO-101 interface kind: {self.kind}")
 
     def init_device(self, visualize: bool = False):
@@ -133,6 +139,8 @@ class LeRobotSO101Interface:
 
         random_session_name = f"eval_{uuid.uuid4().hex[:8]}"
         if visualize:
+            from lerobot.utils.visualization_utils import init_rerun
+
             init_rerun(session_name=random_session_name)
 
         print(f"[INFO]: Initialized the Arm at {self.port} with id {self.id}")
@@ -182,6 +190,14 @@ class LeRobotSO101Interface:
         self,
         name_or_path: str,
     ):
+        from lerobot.configs.policies import PreTrainedConfig
+        from lerobot.datasets.pipeline_features import (
+            aggregate_pipeline_dataset_features,
+            create_initial_features,
+        )
+        from lerobot.datasets.utils import combine_feature_dicts
+        from lerobot.policies.factory import make_policy, make_pre_post_processors
+        from lerobot.processor import make_default_processors
 
         _, self.robot_action_processor, self.robot_observation_processor = (
             make_default_processors()
@@ -230,6 +246,9 @@ class LeRobotSO101Interface:
     def sim_obs_to_policy_processor(
         self, sim_observation: torch.Tensor, visual_obs: dict
     ) -> dict:
+        from lerobot.datasets.utils import build_dataset_frame
+        from lerobot.utils.constants import OBS_STR
+
         # TODO: makes no sense to copy to host here, but this is whay predict_action expects
 
         state: torch.Tensor = self.get_raw_actions_from_radians(sim_observation)
@@ -262,6 +281,9 @@ class LeRobotSO101Interface:
         return observation_frame
 
     def predict_action(self, observation_frame: dict) -> dict:
+        from lerobot.utils.control_utils import predict_action
+        from lerobot.utils.utils import get_safe_torch_device
+
         action_values = predict_action(
             observation=observation_frame,
             policy=self.policy,
@@ -277,6 +299,8 @@ class LeRobotSO101Interface:
     def prediction_to_sim_processor(
         self, action_values: dict, observation_frame: dict, log: bool = False
     ) -> dict:
+        from lerobot.policies.utils import make_robot_action
+
         robot_action = make_robot_action(action_values, self.dataset_features)
         robot_action_to_send = self.robot_action_processor((robot_action, None))
 
@@ -286,6 +310,8 @@ class LeRobotSO101Interface:
         sim_motor_actions: torch.Tensor = self.get_raw_actions_tensor(motor_actions)
 
         if log:
+            from lerobot.utils.visualization_utils import log_rerun_data
+
             log_rerun_data(observation=observation_frame, action=robot_action)
 
         mapped_sim_motor_actions: torch.Tensor = self.get_mapped_actions_vectorized(
@@ -479,6 +505,8 @@ class GR00TRemotePolicy:
         sim_action = self._iface.get_mapped_actions_vectorized(raw_tensor)
 
         if log:
+            from lerobot.utils.visualization_utils import log_rerun_data
+
             state = self._iface.get_raw_actions_from_radians(joint_positions)
             state_np = state.cpu().numpy()
             rename = self._iface.rename_map
