@@ -56,8 +56,8 @@ PAGES_MM = {"a4": (210.0, 297.0), "a3": (297.0, 420.0)}
 # Room reserved under the board for the title block and the 100 mm ruler, and
 # above it for the heading.  Kept tight: A3 is only 297 mm tall and the grid
 # has to stay dense enough to pin the principal point.
-FOOTER_MM = 30.0
-TOP_MM = 12.0
+FOOTER_MM = 24.0
+TOP_MM = 10.0
 MIN_SIDE_MARGIN_MM = 12.0
 
 
@@ -172,7 +172,7 @@ def render_table_board(spec: BoardSpec, page_name: str) -> Image.Image:
 
     title = _font(_mm(4.5))
     body = _font(_mm(3.2))
-    draw.text((_mm(x_mm), _mm(4.0)), "SO-101 table calibration board", fill=0, font=title)
+    draw.text((_mm(x_mm), _mm(6.0)), "SO-101 table calibration board", fill=0, font=title)
     lines = [
         f"{spec.dictionary} | ChArUco {spec.cols}x{spec.rows} | "
         f"square {spec.square_mm:.0f} mm | marker {spec.marker_mm:.0f} mm | "
@@ -246,12 +246,12 @@ def main() -> None:
         description="Generate printable ChArUco/ArUco calibration targets."
     )
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-    parser.add_argument("--cols", type=int, default=7)
+    parser.add_argument("--cols", type=int, default=8)
     parser.add_argument("--rows", type=int, default=5)
     parser.add_argument(
         "--square-mm",
         type=float,
-        default=50.0,
+        default=32.0,
         help="chessboard square size; the front camera sees the board from about "
         "0.7 m, so this is what decides whether it can read it at all",
     )
@@ -271,6 +271,14 @@ def main() -> None:
     )
     parser.add_argument("--distance", type=float, default=0.73,
                         help="metres from the front camera to the board")
+    parser.add_argument(
+        "--capture-width",
+        type=int,
+        default=1280,
+        help="width the front camera will use when it photographs the board; "
+        "the extrinsic does not depend on resolution, so the board may be shot "
+        "at a higher one than the task runs at",
+    )
     parser.add_argument("--gripper-tags", action="store_true",
                         help="also emit the gripper tag sheet (only needed for the "
                              "direct eye-to-hand fallback)")
@@ -304,23 +312,38 @@ def main() -> None:
     spec_path = spec.save()
     print(f"wrote {spec_path}")
 
-    cell_px = predict_cell_px(spec, args.fx, args.distance)
-    print(
-        f"\nBoard: ChArUco {spec.cols}x{spec.rows}, square {spec.square_mm:.0f} mm, "
-        f"marker {spec.marker_mm:.1f} mm -> {spec.width_mm:.0f}x{spec.height_mm:.0f} mm "
-        f"on {page_name.upper()} landscape"
-    )
-    print(f"       {spec.corner_count} corners, {spec.marker_count} markers (ids 0-{spec.marker_count - 1})")
-    print(
-        f"\nReadability at fx={args.fx:.0f}, {args.distance:.2f} m: "
-        f"{cell_px:.1f} px per marker cell"
-    )
-    if cell_px < 3.0:
-        print("       TOO SMALL -- detection collapses near 2 px per cell.")
-    elif cell_px < 4.0:
-        print("       MARGINAL -- fine head-on, fragile once the board is tilted away.")
-    else:
-        print("       OK.")
+    def verdict(cell: float) -> str:
+        if cell < 3.0:
+            return "TOO SMALL -- detection collapses near 2 px per cell"
+        if cell < 4.0:
+            return "MARGINAL -- fine head-on, fragile once tilted away"
+        return "OK"
+
+    task_cell = predict_cell_px(spec, args.fx, args.distance)
+    scale = args.capture_width / 640.0
+    shot_cell = task_cell * scale
+    print(f"\nReadability from the front camera at {args.distance:.2f} m:")
+    print(f"  read out at  640 px wide (fx {args.fx:.0f})  : {task_cell:.1f} px/cell -- {verdict(task_cell)}")
+    print(f"  read out at {args.capture_width:5d} px wide (fx ~{args.fx * scale:.0f}) : "
+          f"{shot_cell:.1f} px/cell -- {verdict(shot_cell)}")
+    if task_cell < 4.0 <= shot_cell:
+        print(
+            "\n  Too small to read at the task resolution, which is fine: photograph\n"
+            "  the board at the higher one for the extrinsic solve. Where a camera\n"
+            "  sits does not depend on how many pixels it is read out with."
+        )
+
+    if spec.corner_count < 24:
+        print(
+            f"\n  Only {spec.corner_count} corners -- few enough that the principal point may stay\n"
+            "  poorly constrained however many images are taken."
+        )
+    elif spec.width_mm < 300:
+        print(
+            f"\n  {spec.corner_count} corners on a {spec.width_mm:.0f} mm board: plan on about 40 intrinsic\n"
+            "  shots rather than 20. Measured, 24 leaves the principal point about\n"
+            "  2 px out and 40 brings it under 1 px."
+        )
     print("\nPrint at 100% scale and measure the 100 mm bar before using the board.")
 
 

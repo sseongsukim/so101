@@ -460,6 +460,20 @@ class Camera:
         return cv2.remap(frame, self._maps[0], self._maps[1], cv2.INTER_LINEAR)
 
 
+def calibration_name(camera: str, width: int, height: int) -> str:
+    """Calibration file stem for a camera at a given readout size.
+
+    Intrinsics are resolution-specific -- a USB camera crops or bins
+    differently per mode -- so each one gets its own record.  The *extrinsic*
+    is not: where the camera sits is a physical fact, so a pose measured from a
+    high-resolution shot applies to the resolution the task runs at.
+    """
+    default = DEFAULT_SPECS[camera]
+    if (width, height) == (default.width, default.height):
+        return camera
+    return f"{camera}_{width}x{height}"
+
+
 def open_camera(
     name: str,
     *,
@@ -468,6 +482,8 @@ def open_camera(
     rectify: bool = True,
     lock_exposure: bool = True,
     fourcc: str | None = None,
+    width: int | None = None,
+    height: int | None = None,
 ) -> Camera:
     """Open one of the rig's cameras by role name (``"wrist"`` or ``"front"``)."""
     if name not in DEFAULT_SPECS:
@@ -475,16 +491,18 @@ def open_camera(
             f"unknown camera {name!r}; expected one of {sorted(DEFAULT_SPECS)}"
         )
     spec = DEFAULT_SPECS[name]
-    if device is not None or fourcc is not None:
+    if any(v is not None for v in (device, fourcc, width, height)):
         spec = CameraSpec(
             name=spec.name,
             device=device or spec.device,
-            width=spec.width,
-            height=spec.height,
+            width=width or spec.width,
+            height=height or spec.height,
             fps=spec.fps,
             fourcc=fourcc or spec.fourcc,
         )
-    calibration = try_load_calibration(name, calibration_dir)
+    calibration = try_load_calibration(
+        calibration_name(name, spec.width, spec.height), calibration_dir
+    )
     return Camera(
         spec,
         calibration,

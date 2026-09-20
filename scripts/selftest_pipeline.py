@@ -60,6 +60,11 @@ BOARD_W = BOARD.width_mm / 1000.0
 BOARD_H = BOARD.height_mm / 1000.0
 SIZE = (640, 480)
 
+# A small board constrains the principal point weakly, and the fix is more
+# images rather than better ones.  This mirrors what the capture script tells
+# the operator, so the test is measuring the procedure people will follow.
+INTRINSIC_SHOTS = 40 if BOARD.width_mm < 300 else 22
+
 K_TRUE = np.array([[598.0, 0.0, 325.0], [0.0, 602.0, 236.0], [0.0, 0.0, 1.0]])
 D_TRUE = np.array([-0.095, 0.021, 0.0004, -0.0003, 0.0])
 
@@ -133,7 +138,7 @@ def check_intrinsics(keep: Path | None) -> bool:
     object_points: list[np.ndarray] = []
     image_points: list[np.ndarray] = []
     board = charuco_board()
-    for index in range(24):
+    for index in range(INTRINSIC_SHOTS):
         angles = np.radians(
             [rng.uniform(-42, 42), rng.uniform(-42, 42), rng.uniform(-25, 25)]
         )
@@ -166,7 +171,9 @@ def check_intrinsics(keep: Path | None) -> bool:
             detection.charuco_corners.reshape(-1, 2).astype(np.float32)
         )
 
-    print(f"  usable renders: {len(object_points)}/24")
+    print(f"  usable renders: {len(object_points)}/{INTRINSIC_SHOTS}"
+          f"   (board {BOARD.cols}x{BOARD.rows} @ {BOARD.square_mm:.0f} mm, "
+          f"{BOARD.corner_count} corners)")
     if len(object_points) < 8:
         print("  FAIL: too few detections; the renderer or detector is broken")
         return False

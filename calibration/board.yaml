@@ -1,5 +1,5 @@
-cols: 7
+cols: 8
 rows: 5
-square_mm: 50.0
-marker_mm: 36.67
+square_mm: 32.0
+marker_mm: 23.47
 dictionary: DICT_4X4_50

@@ -980,6 +980,7 @@
         <li>손목캠이 보드가 어디 있는지 알려주고, front도 같은 보드를 봅니다. 보드는 움직이지 않으므로 <strong>두 카메라가 동시에 볼 필요도 없습니다</strong></li>
         <li>핵심 이점: <strong>테이블은 큰 보드를 올릴 수 있지만 그리퍼는 못 듭니다.</strong> "그리퍼에 50 mm를 어떻게 다나"라는 어려운 제약이 "더 큰 종이에 인쇄한다"로 바뀝니다</li>
         <li>sim에서 확인: 손목 포즈 <strong>24/24 전부</strong>에서 두 카메라가 기하학적으로 보드를 함께 봅니다</li>
+        <li><strong>A4까지만 출력되는 환경</strong>이라 보드는 8×5 · 사각 32 mm · 256×160 mm입니다. 이 크기로는 640×480에서 front가 못 읽지만(2.2 px/셀), <strong>보드 촬영만 1280×720으로</strong> 하면 4.4 px/셀이 됩니다 — 카메라 위치는 해상도와 무관한 물리량이므로 그대로 운용 설정에 씁니다</li>
         <li>그리퍼 태그는 <strong>대비책으로만</strong> 남깁니다 — 생성기에서 <code>--gripper-tags</code>를 줘야 나옵니다</li>
       </ul>
     </div>
@@ -1036,17 +1037,17 @@ pip install -e '.[real]'   <span class="hash"># opencv-python-headless, pyyaml �
         <div class="cmd">
           <button class="copy" type="button">copy</button>
           <pre>python scripts/make_calibration_targets.py
-<span class="hash"># → calibration/targets/table_charuco.pdf  (A3 가로, ChArUco 7×5, 사각 50 mm, 350×250 mm)</span>
-<span class="hash"># → calibration/board.yaml                 (검출기가 읽는 규격 — 인쇄물과 자동으로 일치)</span>
+<span class="hash"># → calibration/targets/table_charuco.pdf  (A4 가로, ChArUco 8×5, 사각 32 mm, 256×160 mm)</span>
+<span class="hash"># → calibration/board.yaml                 (검출기가 읽는 규격 — 인쇄물과 자동 일치)</span>
 
-<span class="hash"># intrinsic 측정이 끝난 뒤, 실제 fx로 판독성을 다시 확인</span>
+<span class="hash"># intrinsic 측정 후, 실제 fx로 판독성 재확인</span>
 python scripts/make_calibration_targets.py --fx 550 --distance 0.73</pre>
         </div>
 
         <div class="note note-warn">
           <strong>배율 100%로 인쇄.</strong> 프린터 대화상자의 "페이지에 맞춤" / "scale to fit"을
           반드시 끄세요. 켜면 치수가 틀어지고 이후 모든 숫자가 조용히 틀립니다.
-          <strong>무광 용지</strong>만 — 광택지는 조명 반사로 검출이 실패합니다. 이 보드는 <strong>A3</strong>입니다.
+          <strong>무광 용지</strong>만 — 광택지는 조명 반사로 검출이 실패합니다. 이 보드는 <strong>A4 가로</strong> 한 장입니다.
         </div>
 
         <div class="criteria">
@@ -1095,11 +1096,16 @@ python scripts/make_calibration_targets.py --fx 550 --distance 0.73</pre>
       <div class="step-body">
         <div class="cmd">
           <button class="copy" type="button">copy</button>
-          <pre>python scripts/calibrate_intrinsics.py --camera front
+          <pre><span class="hash"># 운용 해상도 — 정책이 실제로 쓸 값</span>
+python scripts/calibrate_intrinsics.py --camera front
 python scripts/calibrate_intrinsics.py --camera wrist
 
-<span class="hash"># 인쇄 사각이 30 mm가 아니었다면</span>
-python scripts/calibrate_intrinsics.py --camera front --square-mm 29.7
+<span class="hash"># front 고해상도 — 05단계의 보드 촬영용. 별도 파일로 저장됨</span>
+python scripts/calibrate_intrinsics.py --camera front --width 1280 --height 720
+<span class="hash"># → calibration/cameras/front_1280x720.yaml</span>
+
+<span class="hash"># 인쇄 사각이 32 mm가 아니었다면</span>
+python scripts/calibrate_intrinsics.py --camera front --square-mm 31.7
 
 <span class="hash"># 이미 찍은 사진으로 다시 풀기만</span>
 python scripts/calibrate_intrinsics.py --camera front --solve-only</pre>
@@ -1113,7 +1119,7 @@ python scripts/calibrate_intrinsics.py --camera front --solve-only</pre>
           <h4>촬영 프로토콜</h4>
           <ul>
             <li><strong>640×480에서 직접</strong> 촬영 (스크립트가 강제). 720p로 찍고 K를 스케일하면 안 됩니다 — USB 카메라는 해상도 모드마다 센서 크롭·비닝이 달라 실효 FOV가 바뀝니다</li>
-            <li>15~25장, 보드가 <strong>각 사분면과 중앙</strong>을 덮도록</li>
+            <li><strong>약 40장</strong>, 보드가 <strong>각 사분면과 중앙</strong>을 덮도록. A4 보드는 작아서 24장으로는 principal point가 2 px 남고, 40장이면 1 px 아래로 떨어집니다 (측정값). 스크립트가 목표 장수를 알려줍니다</li>
             <li>광축 대비 <strong>±30~45° 기울임 5장 이상</strong>. 정면만 찍으면 초점거리와 거리가 얽혀 fx가 불안정해집니다</li>
             <li>화면의 1/3~2/3을 채우는 여러 거리에서</li>
           </ul>
@@ -1129,6 +1135,13 @@ python scripts/calibrate_intrinsics.py --camera front --solve-only</pre>
           <p style="margin:10px 0 0;color:var(--ink-soft);font-size:13.5px">
             불합격이면 <code>*.rejected.yaml</code>로 떨어지고 정식 파일은 건드리지 않습니다.
           </p>
+        </div>
+
+        <div class="note">
+          <strong>front는 두 번 캘리브레이션합니다.</strong> intrinsic은 해상도마다 다르지만
+          (USB 카메라는 모드별로 센서를 크롭·비닝합니다), <strong>카메라가 어디 있는지는
+          해상도와 무관한 물리량</strong>입니다. 그래서 보드는 1280×720으로 찍어 위치를 구하고,
+          그 위치를 640×480 운용 설정에 그대로 씁니다.
         </div>
 
         <div class="note note-warn">
@@ -1187,10 +1200,12 @@ python -u scripts/calibrate_handeye.py --camera wrist --solve</pre>
         </p>
         <div class="cmd">
           <button class="copy" type="button">copy</button>
-          <pre><span class="hash"># front로 보드를 몇 장 찍고</span>
-python scripts/view_cameras.py --camera front --watch 5 --interval 1.0 --raw
+          <pre><span class="hash"># front로 보드를 고해상도로 몇 장 찍고 (로봇은 움직이지 않음)</span>
+python scripts/view_cameras.py --camera front --width 1280 --height 720 \
+    --watch 5 --interval 1.0 --raw
 
 <span class="hash"># 손목캠 결과 + 그 프레임들로 front 위치를 푼다</span>
+<span class="hash"># (프레임 크기를 보고 front_1280x720 intrinsic을 자동 선택)</span>
 python -u scripts/calibrate_handeye.py --camera front --solve --via-board \
     --front-image outputs/camera_views/front_raw_*.png</pre>
         </div>
@@ -1202,6 +1217,7 @@ T_env_front = T_env_board · T_frontcam_board⁻¹</div>
             <li><strong>board position scatter</strong> — 손목 프레임들이 말하는 보드 위치가 얼마나 일치하는지. 10 mm 초과면 04를 다시 하세요</li>
             <li><strong>front frames 간 scatter</strong> — 여러 장에서 나온 front 위치의 흩어짐</li>
             <li>보드가 04와 05 사이에 움직였다면 이 값들이 조용히 틀립니다. 건드리지 마세요</li>
+            <li>구해진 위치는 <code>front.yaml</code>(640×480 운용 파일)에 기록됩니다 — 고해상도 파일이 아니라</li>
           </ul>
         </div>
         <div class="note">

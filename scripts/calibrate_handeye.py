@@ -88,6 +88,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="--via-board: one or more front-camera frames showing the board",
     )
+    parser.add_argument(
+        "--front-calibration",
+        default=None,
+        help="--via-board: which front intrinsics the frames were taken with, "
+        "e.g. front_1280x720. Defaults to matching the image size.",
+    )
     return parser
 
 
@@ -359,13 +365,27 @@ def _solve_via_board(args) -> int:
     )
     from so101.handeye import camera_pose_from_board, consensus, pose_matrix
 
+    from so101.real.cameras import calibration_name
+
     if not args.front_image:
         print("[fail] --via-board needs --front-image with at least one frame")
         return 1
+
+    # Intrinsics are per-resolution, so pick the record matching the frames
+    # rather than assuming they were shot at the task resolution.
+    stem = args.front_calibration
+    if stem is None:
+        probe = cv2.imread(str(args.front_image[0]))
+        if probe is None:
+            print(f"[fail] could not read {args.front_image[0]}")
+            return 1
+        stem = calibration_name("front", probe.shape[1], probe.shape[0])
+        print(f"[info] frames are {probe.shape[1]}x{probe.shape[0]}; using "
+              f"intrinsics {stem!r}")
     try:
-        front = load_calibration("front")
+        front = load_calibration(stem)
     except Exception as error:  # noqa: BLE001 - surfaced verbatim
-        print(f"[fail] front intrinsics are required first: {error}")
+        print(f"[fail] intrinsics {stem!r} are required first: {error}")
         return 1
 
     square_mm = args.square_mm
@@ -424,17 +444,25 @@ def _solve_via_board(args) -> int:
         "good enough."
     )
 
-    front.extrinsic = CameraExtrinsic(
+    # The pose goes on the record the task actually runs with.  A camera's
+    # position is a physical fact, so one measured from higher-resolution
+    # frames applies unchanged -- only the intrinsics are resolution-specific.
+    try:
+        target = load_calibration("front")
+    except Exception as error:  # noqa: BLE001 - surfaced verbatim
+        print(f"[fail] the task-resolution front intrinsics are needed too: {error}")
+        return 1
+    target.extrinsic = CameraExtrinsic(
         parent="env",
         pos=tuple(float(v) for v in best[:3, 3]),
         quat_wxyz=matrix_to_quat_wxyz(best[:3, :3]),
     )
-    front.notes = (front.notes + " | " if front.notes else "") + (
+    target.notes = (target.notes + " | " if target.notes else "") + (
         f"shared board via wrist, {used} wrist frames, {len(solutions)} front "
-        f"frames, board scatter {board_scatter_mm:.2f} mm"
+        f"frames from {stem}, board scatter {board_scatter_mm:.2f} mm"
     )
     output = calibration_path("front")
-    front.save(output)
+    target.save(output)
     print(f"  wrote extrinsic (parent=env, convention=ros) -> {output}")
     return 0
 

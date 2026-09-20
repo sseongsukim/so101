@@ -125,6 +125,14 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--show", action="store_true", help="open a window instead")
+    parser.add_argument("--width", type=int, default=None)
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help="readout size; use the higher one when photographing the board for "
+        "the extrinsic solve",
+    )
     args = parser.parse_args()
 
     names = args.camera or sorted(DEFAULT_SPECS)
@@ -139,7 +147,10 @@ def main() -> int:
         return 1
 
     cameras = {
-        name: open_camera(name, rectify=not args.raw) for name in names
+        name: open_camera(
+            name, rectify=not args.raw, width=args.width, height=args.height
+        )
+        for name in names
     }
     for name, camera in cameras.items():
         if args.raw:

@@ -13,8 +13,8 @@ re-shooting -- useful when the printed square turns out not to be exactly
 Examples:
 
     python scripts/calibrate_intrinsics.py --camera front
-    python scripts/calibrate_intrinsics.py --camera wrist --auto 20
-    python scripts/calibrate_intrinsics.py --camera front --solve-only --square-mm 29.7
+    python scripts/calibrate_intrinsics.py --camera front --width 1280 --height 720
+    python scripts/calibrate_intrinsics.py --camera front --solve-only --square-mm 31.7
 """
 
 from __future__ import annotations
@@ -37,12 +37,11 @@ from so101.camera_calibration import (  # noqa: E402
     calibration_path,
 )
 from so101.charuco import (  # noqa: E402
-    MARKER_MM,
-    SQUARE_MM,
     board_corner_count,
     board_object_points,
     charuco_board,
     detect_board,
+    load_board_spec,
 )
 from so101.intrinsics import (  # noqa: E402
     centered_virtual_matrix,
@@ -51,7 +50,12 @@ from so101.intrinsics import (  # noqa: E402
     raw_horizontal_fov_deg,
     virtual_horizontal_fov_deg,
 )
-from so101.real.cameras import DEFAULT_SPECS, Camera  # noqa: E402
+from so101.real.cameras import (  # noqa: E402
+    DEFAULT_SPECS,
+    Camera,
+    CameraSpec,
+    calibration_name,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -115,10 +119,15 @@ def describe_gaps(covered: set[tuple[int, int]]) -> str:
 
 
 def capture_session(
-    camera_name: str, capture_dir: Path, auto: int, interval: float, square_mm: float
+    camera_name: str,
+    capture_dir: Path,
+    auto: int,
+    interval: float,
+    square_mm: float | None,
+    spec: CameraSpec,
+    wanted_shots: int,
 ) -> None:
-    board = charuco_board(square_mm, MARKER_MM * square_mm / SQUARE_MM)
-    spec = DEFAULT_SPECS[camera_name]
+    board = charuco_board(square_mm) if square_mm else charuco_board()
     size = (spec.width, spec.height)
     capture_dir.mkdir(parents=True, exist_ok=True)
     existing = sorted(capture_dir.glob("shot_*.png"))
@@ -135,9 +144,10 @@ def capture_session(
         print(f"[info] {camera_name} open on {spec.device} at {size[0]}x{size[1]}")
         print(f"[info] exposure locked: {camera.exposure_lock.as_dict()}")
         print(
-            "\nAim for 15-25 shots covering every part of the frame, including "
-            f"at least {MIN_TILTED_SHOTS} tilted {MIN_TILT_DEG:.0f} deg or more.\n"
-            "Head-on shots alone cannot separate focal length from distance.\n"
+            f"\nAim for about {wanted_shots} shots covering every part of the "
+            f"frame, including at\nleast {MIN_TILTED_SHOTS} tilted "
+            f"{MIN_TILT_DEG:.0f} deg or more. Head-on shots alone cannot "
+            "separate\nfocal length from distance.\n"
         )
         while True:
             if auto:
@@ -188,12 +198,12 @@ def capture_session(
 def solve(
     camera_name: str,
     capture_dir: Path,
-    square_mm: float,
+    square_mm: float | None,
     output: Path,
     rms_gate: float,
+    spec: CameraSpec,
 ) -> int:
-    board = charuco_board(square_mm, MARKER_MM * square_mm / SQUARE_MM)
-    spec = DEFAULT_SPECS[camera_name]
+    board = charuco_board(square_mm) if square_mm else charuco_board()
     size = (spec.width, spec.height)
 
     shots = sorted(capture_dir.glob("shot_*.png"))
@@ -237,6 +247,7 @@ def solve(
         print(f"[fail] only {used} usable shots")
         return 1
 
+    board_square_mm = square_mm or load_board_spec().square_mm
     rms, camera_matrix, distortion, _, _ = cv2.calibrateCamera(
         [p.astype(np.float32) for p in object_points],
         [p.astype(np.float32) for p in image_points],
@@ -253,7 +264,10 @@ def solve(
     distortion_px = distortion_pixel_magnitude(camera_matrix, distortion, size)
 
     print("\n" + "=" * 68)
-    print(f"INTRINSICS: {camera_name}  ({used} shots, square {square_mm:.2f} mm)")
+    print(
+        f"INTRINSICS: {camera_name} at {size[0]}x{size[1]}  "
+        f"({used} shots, square {board_square_mm:.2f} mm)"
+    )
     print("=" * 68)
     print(f"  RMS reprojection : {rms:.4f} px   (gate < {rms_gate})")
     print(
@@ -281,7 +295,7 @@ def solve(
         )
 
     calibration = CameraCalibration(
-        name=camera_name,
+        name=calibration_name(camera_name, spec.width, spec.height),
         device=spec.device,
         resolution=size,
         fps=spec.fps,
@@ -294,7 +308,7 @@ def solve(
         calib_rms_px=float(rms),
         hfov_loss_frac=float(fov_loss),
         date=date.today().isoformat(),
-        notes=f"{used} shots, square {square_mm:.2f} mm, {DEFAULT_CAPTURE_ROOT.name}",
+        notes=f"{used} shots at {size[0]}x{size[1]}, square {board_square_mm:.2f} mm",
     )
 
     if problems:
@@ -326,8 +340,16 @@ def main() -> int:
     parser.add_argument(
         "--square-mm",
         type=float,
-        default=SQUARE_MM,
-        help=f"measured printed square size in mm (nominal {SQUARE_MM})",
+        default=None,
+        help="measured printed square size in mm; defaults to calibration/board.yaml",
+    )
+    parser.add_argument("--width", type=int, default=None)
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help="readout size; intrinsics are per-resolution, so a non-default size "
+        "is written to its own file",
     )
     parser.add_argument("--solve-only", action="store_true")
     parser.add_argument(
@@ -341,20 +363,40 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
 
-    capture_dir = args.capture_dir or (DEFAULT_CAPTURE_ROOT / args.camera)
-    output = args.output or calibration_path(args.camera)
+    default_spec = DEFAULT_SPECS[args.camera]
+    spec = CameraSpec(
+        name=default_spec.name,
+        device=default_spec.device,
+        width=args.width or default_spec.width,
+        height=args.height or default_spec.height,
+        fps=default_spec.fps,
+        fourcc=default_spec.fourcc,
+    )
+    stem = calibration_name(args.camera, spec.width, spec.height)
 
-    if abs(args.square_mm - SQUARE_MM) > 1e-9:
+    capture_dir = args.capture_dir or (DEFAULT_CAPTURE_ROOT / stem)
+    output = args.output or calibration_path(stem)
+
+    board_spec = load_board_spec()
+    # A small board constrains the principal point weakly, and that is fixed by
+    # taking more images rather than by taking better ones.
+    wanted_shots = 40 if board_spec.width_mm < 300 else 22
+    print(
+        f"[info] board {board_spec.cols}x{board_spec.rows}, square "
+        f"{board_spec.square_mm:.1f} mm, {board_spec.corner_count} corners"
+    )
+    if args.square_mm:
         print(
             f"[info] using measured square {args.square_mm} mm instead of the "
-            f"nominal {SQUARE_MM} mm"
+            f"recorded {board_spec.square_mm} mm"
         )
 
     if not args.solve_only:
         capture_session(
-            args.camera, capture_dir, args.auto, args.interval, args.square_mm
+            args.camera, capture_dir, args.auto, args.interval, args.square_mm,
+            spec, wanted_shots,
         )
-    return solve(args.camera, capture_dir, args.square_mm, output, args.rms_gate)
+    return solve(args.camera, capture_dir, args.square_mm, output, args.rms_gate, spec)
 
 
 if __name__ == "__main__":
