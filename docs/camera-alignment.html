@@ -1,0 +1,1037 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+  :root { color-scheme: light dark; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>SO-101 카메라 정합</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper:        #f4f5f3;
+    --surface:      #ffffff;
+    --surface-sunk: #eceeeb;
+    --ink:          #13181b;
+    --ink-soft:     #4a5558;
+    --ink-faint:    #76817f;
+    --rule:         #d8dcd9;
+    --rule-strong:  #b9c0bc;
+    --accent:       #0d6b6e;
+    --accent-soft:  #e2efee;
+    --pass:         #2f6b3a;
+    --pass-soft:    #e3efe4;
+    --warn:         #8a5411;
+    --warn-soft:    #f6eddc;
+    --fail:         #9b2c2c;
+    --fail-soft:    #f7e6e4;
+    --code-bg:      #11181a;
+    --code-ink:     #dfe8e6;
+    --code-dim:     #7f9491;
+
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:        #0e1214;
+      --surface:      #161c1e;
+      --surface-sunk: #101618;
+      --ink:          #e6ebe9;
+      --ink-soft:     #a6b2b0;
+      --ink-faint:    #798584;
+      --rule:         #27302f;
+      --rule-strong:  #3a4544;
+      --accent:       #58b9b6;
+      --accent-soft:  #12292a;
+      --pass:         #79c089;
+      --pass-soft:    #14241a;
+      --warn:         #d8a45e;
+      --warn-soft:    #262015;
+      --fail:         #e08b84;
+      --fail-soft:    #2a1917;
+      --code-bg:      #080c0d;
+      --code-ink:     #d6e0de;
+      --code-dim:     #6e8280;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:        #0e1214;
+    --surface:      #161c1e;
+    --surface-sunk: #101618;
+    --ink:          #e6ebe9;
+    --ink-soft:     #a6b2b0;
+    --ink-faint:    #798584;
+    --rule:         #27302f;
+    --rule-strong:  #3a4544;
+    --accent:       #58b9b6;
+    --accent-soft:  #12292a;
+    --pass:         #79c089;
+    --pass-soft:    #14241a;
+    --warn:         #d8a45e;
+    --warn-soft:    #262015;
+    --fail:         #e08b84;
+    --fail-soft:    #2a1917;
+    --code-bg:      #080c0d;
+    --code-ink:     #d6e0de;
+    --code-dim:     #6e8280;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.62;
+    margin: 0;
+    padding-inline: 20px;
+    padding-block: 0 72px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 860px; margin: 0 auto; }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding-block: 40px 20px;
+    margin-bottom: 36px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--cond);
+    font-weight: 700;
+    font-size: clamp(34px, 7vw, 52px);
+    line-height: 1.04;
+    letter-spacing: -0.015em;
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: 17px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 24px;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 22px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+  .meta b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- sections ---------- */
+  section { margin-block: 52px; }
+  h2 {
+    font-family: var(--cond);
+    font-weight: 700;
+    font-size: 27px;
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .section-note {
+    color: var(--ink-soft);
+    max-width: 66ch;
+    margin: 0 0 24px;
+  }
+  h3 {
+    font-family: var(--cond);
+    font-weight: 600;
+    font-size: 19px;
+    margin: 32px 0 8px;
+    text-wrap: balance;
+  }
+  p { max-width: 68ch; }
+  a { color: var(--accent); }
+
+  /* ---------- chips ---------- */
+  .chip {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 3px;
+    white-space: nowrap;
+    vertical-align: 1px;
+  }
+  .chip-done   { background: var(--pass-soft);   color: var(--pass); }
+  .chip-part   { background: var(--warn-soft);   color: var(--warn); }
+  .chip-site   { background: var(--accent-soft); color: var(--accent); }
+  .chip-open   { background: var(--fail-soft);   color: var(--fail); }
+
+  /* ---------- tables ---------- */
+  .scroll { overflow-x: auto; margin-block: 18px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 480px;
+    font-size: 14px;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    text-align: left;
+    padding: 0 14px 7px 0;
+    border-bottom: 1px solid var(--rule-strong);
+  }
+  td {
+    padding: 9px 14px 9px 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td code, p code, li code, dd code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--surface-sunk);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  /* ---------- command blocks ---------- */
+  .cmd {
+    position: relative;
+    background: var(--code-bg);
+    border-radius: 6px;
+    margin-block: 14px;
+    overflow: hidden;
+  }
+  .cmd pre {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--code-ink);
+    margin: 0;
+    padding: 16px 64px 16px 18px;
+    overflow-x: auto;
+  }
+  .cmd .hash { color: var(--code-dim); }
+  .copy {
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--code-dim);
+    background: transparent;
+    border: 1px solid #2b3638;
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: color .15s, border-color .15s;
+  }
+  .copy:hover { color: var(--code-ink); border-color: #4a5a5c; }
+  .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .copy[data-state="ok"] { color: #7fc78d; border-color: #33543a; }
+
+  /* ---------- steps ---------- */
+  .step {
+    border-top: 1px solid var(--rule-strong);
+    padding-block: 26px;
+  }
+  .step:last-of-type { border-bottom: 1px solid var(--rule-strong); }
+  .step-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .step-no {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    flex: none;
+    width: 2.2em;
+    font-variant-numeric: tabular-nums;
+  }
+  .step-title {
+    font-family: var(--cond);
+    font-weight: 700;
+    font-size: 21px;
+    margin: 0;
+    flex: 1 1 auto;
+    text-wrap: balance;
+  }
+  .step-body { padding-left: calc(2.2em + 12px); }
+  @media (max-width: 520px) { .step-body { padding-left: 0; } }
+  .step-body > :first-child { margin-top: 0; }
+
+  .tick {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    cursor: pointer;
+    user-select: none;
+  }
+  .tick input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+  .tick input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .step.is-done .step-title { color: var(--ink-faint); text-decoration: line-through; text-decoration-thickness: 1px; }
+
+  /* ---------- callouts ---------- */
+  .note {
+    border-left: 3px solid var(--rule-strong);
+    padding: 2px 0 2px 16px;
+    margin-block: 16px;
+    color: var(--ink-soft);
+    max-width: 66ch;
+  }
+  .note strong { color: var(--ink); }
+  .note-warn { border-left-color: var(--warn); }
+  .note-warn strong { color: var(--warn); }
+  .note-stop { border-left-color: var(--fail); }
+  .note-stop strong { color: var(--fail); }
+
+  .criteria {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-block: 16px;
+  }
+  .criteria h4 {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 8px;
+  }
+  .criteria ul { margin: 0; padding-left: 18px; }
+  .criteria li { margin-block: 4px; }
+  .criteria li::marker { color: var(--accent); }
+
+  /* ---------- defect list ---------- */
+  .defects { list-style: none; padding: 0; margin: 0; }
+  .defects > li {
+    border-top: 1px solid var(--rule);
+    padding-block: 18px;
+  }
+  .defects > li:last-child { border-bottom: 1px solid var(--rule); }
+  .defect-title {
+    font-family: var(--cond);
+    font-weight: 600;
+    font-size: 17px;
+    margin: 0 0 4px;
+  }
+  .defect-body { color: var(--ink-soft); margin: 0; max-width: 68ch; }
+  .defect-body strong { color: var(--ink); font-weight: 600; }
+
+  ul.plain { padding-left: 18px; max-width: 68ch; }
+  ul.plain li { margin-block: 5px; }
+  ul.plain li::marker { color: var(--rule-strong); }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 20px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">SIM2REAL · 카메라 정합</p>
+    <h1>SO-101 카메라 정합</h1>
+    <p class="lede">
+      실제 카메라 2대를 Isaac Lab의 SO-101 stack cube 씬과 맞추는 작업.
+      원격에서 할 수 있는 것은 전부 끝났고, 이 문서의 후반부가 현장에서 실행할 순서입니다.
+    </p>
+    <div class="meta">
+      <span>브랜치 <b>dsafjk0024</b></span>
+      <span>최신 커밋 <b>2ad2017</b></span>
+      <span>원격 <b>#1–#7, #9–#11</b> 완료</span>
+      <span>현장 <b>#12–#16</b> 대기</span>
+    </div>
+  </header>
+
+  <!-- ============ 1. 정합 방식 ============ -->
+  <section>
+    <h2>정합을 어떤 방식으로 하는가</h2>
+    <p class="section-note">
+      실물이 기준이고 sim이 따라갑니다. 다만 Isaac이 표현하지 못하는 것이 있어서,
+      두 쪽은 <em>가상 정규화 카메라</em>라는 중간 지점에서 만납니다.
+    </p>
+
+    <p>
+      IsaacLab의 <code>Camera</code>는 이상적인 핀홀만 렌더합니다. 소스에서 확인한 제약:
+    </p>
+    <ul class="plain">
+      <li><code>camera.py:575-605</code> — <code>f_y = f_x</code>, <code>c_x = W/2</code>, <code>c_y = H/2</code> <strong>하드코딩</strong></li>
+      <li><code>sensors.py:108-111</code> — aperture offset <strong>무시</strong> (NVIDIA 티켓 OM-42611)</li>
+      <li><code>utils/sensors.py:57-58</code> — <code>from_intrinsic_matrix</code>가 cx/cy를 <strong>0으로 버리고</strong> fx/fy를 평균냄</li>
+    </ul>
+    <p>
+      그래서 렌더러를 구부리는 대신, 실물 프레임을 Isaac이 정확히 재현할 수 있는 형태로 옮깁니다.
+      왜곡 제거와 중심 정렬이 같은 <code>remap</code> 한 번에 처리됩니다.
+    </p>
+
+    <div class="cmd">
+      <button class="copy" type="button">copy</button>
+      <pre>K_virtual = [[f, 0, 320], [0, f, 240], [0, 0, 1]],  dist = 0,  alpha = 0
+
+<span class="hash">실물</span> initUndistortRectifyMap + remap   (캡처 모듈 내부에서 항상 적용)
+<span class="hash">sim </span> focal_length = f × 20.955 / 640    (wrist/front 각각 다른 f)
+<span class="hash">좌표</span> convention "opengl" → "ros"        (OpenCV 출력을 변환 없이 대입)</pre>
+    </div>
+
+    <p>
+      Isaac Sim 5.1에는 전체 OpenCV 왜곡 모델(<code>opencvPinhole</code>)이 있지만 IsaacLab이 쓰지 않습니다.
+      rectify 후 hFOV 손실이 10%를 넘으면 그 경로를 검토합니다 — 이슈 #16의 분기 1.
+    </p>
+  </section>
+
+  <!-- ============ 2. 원격 완료 ============ -->
+  <section>
+    <h2>원격에서 끝난 것</h2>
+    <p class="section-note">
+      커밋 5개: <code>9561151</code> · <code>49814ef</code> · <code>9a8de9c</code> · <code>e36c9d3</code> · <code>2ad2017</code>
+    </p>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:3.2em">#</th>
+            <th>산출물</th>
+            <th>내용</th>
+            <th style="width:5.5em">상태</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="num">1</td>
+            <td><code>src/so101/real/cameras.py</code></td>
+            <td>V4L2 캡처, 640×480@30, 노출 잠금, rectify 내장, <code>read_raw()</code>·<code>read_fresh()</code></td>
+            <td><span class="chip chip-done">완료</span></td>
+          </tr>
+          <tr>
+            <td class="num">2</td>
+            <td><code>src/so101/camera_calibration.py</code></td>
+            <td>카메라별 yaml 스키마와 공용 로더. sim과 실물이 같은 파일을 읽음</td>
+            <td><span class="chip chip-done">완료</span></td>
+          </tr>
+          <tr>
+            <td class="num">3</td>
+            <td><code>scenes/tabletop.py</code></td>
+            <td>카메라별 intrinsic 분리, <code>convention="ros"</code>, yaml 연동</td>
+            <td><span class="chip chip-done">완료</span></td>
+          </tr>
+          <tr>
+            <td class="num">4</td>
+            <td><code>scripts/audit_camera_frames.py</code></td>
+            <td><code>T_env_base</code> 확정, 스폰 영역 가시성 점검</td>
+            <td><span class="chip chip-done">완료</span></td>
+          </tr>
+          <tr>
+            <td class="num">5</td>
+            <td><code>scripts/calibrate_intrinsics.py</code></td>
+            <td>촬영·해석 분리, 커버리지·기울임 피드백, 가상 카메라 탐색</td>
+            <td><span class="chip chip-done">완료</span></td>
+          </tr>
+          <tr>
+            <td class="num">6</td>
+            <td><code>scripts/calibrate_handeye.py</code></td>
+            <td>Isaac FK 기반, 솔버 5종 비교, front는 eye-to-hand 반전</td>
+            <td><span class="chip chip-done">완료</span></td>
+          </tr>
+          <tr>
+            <td class="num">7</td>
+            <td><code>scripts/verify_alignment.py</code></td>
+            <td><code>--quick</code> / <code>--gate</code> / <code>--drift</code> / <code>--selftest</code></td>
+            <td><span class="chip chip-done">완료</span></td>
+          </tr>
+          <tr>
+            <td class="num">8</td>
+            <td><code>scripts/selftest_pipeline.py</code></td>
+            <td>참값 대비 파이프라인 검증. wrist 렌더 셀프테스트만 미해결</td>
+            <td><span class="chip chip-part">부분</span></td>
+          </tr>
+          <tr>
+            <td class="num">9</td>
+            <td><code>calibration/handeye_poses/*.json</code></td>
+            <td>sim에서 충돌·가시성 검증된 24포즈 × 2세트</td>
+            <td><span class="chip chip-done">완료</span></td>
+          </tr>
+          <tr>
+            <td class="num">10</td>
+            <td><code>scripts/make_calibration_targets.py</code></td>
+            <td>ChArUco 보드 + 그리퍼 태그 인쇄 PDF</td>
+            <td><span class="chip chip-done">완료</span></td>
+          </tr>
+          <tr>
+            <td class="num">11</td>
+            <td><code>scripts/view_cameras.py</code></td>
+            <td><code>stream_d435i.py</code> 대체. 검출 오버레이, raw/rect 토글</td>
+            <td><span class="chip chip-done">완료</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>검증한 수치</h3>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>항목</th><th>결과</th><th class="num">기준</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>두 카메라 동시 캡처</td>
+            <td class="num">30.0 Hz (비압축 YUYV)</td>
+            <td class="num">30 Hz</td>
+          </tr>
+          <tr>
+            <td>intrinsic 합성 복원 — fx / fy</td>
+            <td class="num">0.29% / 0.32%</td>
+            <td class="num">&lt; 1%</td>
+          </tr>
+          <tr>
+            <td>intrinsic 합성 복원 — cx / cy</td>
+            <td class="num">0.07% / 0.42%</td>
+            <td class="num">&lt; 2 px</td>
+          </tr>
+          <tr>
+            <td>intrinsic RMS 재투영</td>
+            <td class="num">0.2149 px</td>
+            <td class="num">&lt; 0.3 px</td>
+          </tr>
+          <tr>
+            <td>hand-eye 복원 (양쪽 마운팅)</td>
+            <td class="num">0.000 mm / 0.000°</td>
+            <td class="num">&lt; 2 mm</td>
+          </tr>
+          <tr>
+            <td>마운팅 반전 대조군</td>
+            <td class="num">398 mm · 962 mm 어긋남</td>
+            <td class="num">검출됨</td>
+          </tr>
+          <tr>
+            <td>잡음 하 솔버 선택 (front)</td>
+            <td class="num">2.30 mm 선택 / 최악 23.16 mm</td>
+            <td class="num">—</td>
+          </tr>
+          <tr>
+            <td>Isaac 렌더 셀프테스트 (front)</td>
+            <td class="num">0.38 mm · 0.308° · 0.129 px</td>
+            <td class="num">&lt; 2 mm</td>
+          </tr>
+          <tr>
+            <td>포즈 다양성 — wrist / front</td>
+            <td class="num">최소 18.6° / 76.3°</td>
+            <td class="num">—</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>확정된 하드웨어</h3>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>역할</th><th>장치</th><th>경로</th><th>비고</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>wrist</td><td>Innomaker U20CAM-720P</td><td><code>/dev/video0</code></td><td>오른쪽 장착 — USD <code>RIGHT-CAMERA</code>와 일치</td></tr>
+          <tr><td>front</td><td>Orbbec Gemini 컬러</td><td><code>/dev/video6</code></td><td>책상 고정 마운트, depth 미사용</td></tr>
+          <tr><td>follower</td><td>—</td><td><code>/dev/so101-follower</code></td><td>ttyACM1, udev 규칙 기존재</td></tr>
+          <tr><td>leader</td><td>—</td><td><code>/dev/so101-leader</code></td><td>ttyACM0</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 3. 잡아낸 오류 ============ -->
+  <section>
+    <h2>작업 중 잡아낸 실제 오류</h2>
+    <p class="section-note">
+      모두 그대로 뒀다면 현장에서 원인 불명으로 나타났을 것들입니다.
+    </p>
+
+    <ol class="defects">
+      <li>
+        <p class="defect-title">노출 잠금이 드라이버 기본값을 고정하고 있었음</p>
+        <p class="defect-body">
+          AE가 동작 중일 때 <code>exposure_time_absolute</code>는 <code>inactive</code> 플래그 상태라,
+          읽으면 측광값이 아니라 <strong>드라이버 기본값</strong>이 돌아옵니다. 그 값을 고정하니
+          wrist가 <strong>순백으로 날아갔고</strong>, 그 상태로는 보드 검출이 전부 실패합니다.
+          목표 밝기로 직접 이분 탐색하도록 바꿨고, 배경의 밝은 창에 끌려가지 않게 중앙 영역으로 측광합니다.
+          결과: wrist 포화 0.00%, front 중앙 포화 9.16% → 3.84%.
+        </p>
+      </li>
+      <li>
+        <p class="defect-title">제가 넣은 <code>CAP_PROP_BUFFERSIZE=1</code>이 프레임레이트를 깎고 있었음</p>
+        <p class="defect-body">
+          프레임 신선도를 위해 넣었는데 wrist가 <strong>30.1 → 21.2 fps</strong>로 떨어졌습니다
+          (드라이버 자체는 30.15 유지). 설정을 빼고, 신선도가 필요한 곳에서만
+          <code>read_fresh()</code>로 큐를 비웁니다.
+        </p>
+      </li>
+      <li>
+        <p class="defect-title">검증이 다른 저장소의 코드를 돌고 있었음</p>
+        <p class="defect-body">
+          <code>so101</code> 패키지가 옆 체크아웃 <code>research/so101</code>에서 editable로 설치돼 있어,
+          초기 프레임 감사가 <strong>제 리팩터를 전혀 거치지 않은 구버전</strong>을 실행했습니다.
+          경로 우선순위를 바로잡고 재실행하니 숫자가 6자리까지 동일했고, 그제서야 ROS 변환 검증이 근거를 갖게 됐습니다.
+        </p>
+      </li>
+      <li>
+        <p class="defect-title"><code>T_env_base</code>가 항등이 아님 — 잠재된 90° 오차</p>
+        <p class="defect-body">
+          <code>assets/so101.py:55</code>의 <code>rot=euler_angles_to_quat([0,0,90])</code> 때문에
+          로봇 베이스가 env 프레임 대비 <strong>Z축 90° 회전</strong>해 있습니다. prim이
+          <code>(0,0,0)</code>에 있어 "base == env origin"이 안전해 보이는 함정입니다.
+          별도 URDF FK를 썼다면 모든 카메라 pose에 90° yaw 오차가 조용히 들어갔을 것이고,
+          Isaac FK를 쓰기로 한 결정이 이를 피해갑니다.
+        </p>
+      </li>
+      <li>
+        <p class="defect-title">Isaac 렌더 경로의 세 가지 함정</p>
+        <p class="defect-body">
+          ① Omniverse가 <strong>텍스처를 비동기로 스트리밍</strong>해서, 머티리얼 생성 직후 한 프레임만
+          렌더하면 회색 폴백이 나옵니다. ② <code>CuboidCfg</code>가 만드는 지오메트리에는
+          <strong>UV 좌표가 없어</strong> OmniPBR이 텍스처를 입힐 곳이 없습니다.
+          ③ <code>getChessboardCorners</code>의 보드 프레임은 +y가 아래라서 <strong>+z가 읽는 면의 반대쪽</strong>을
+          향합니다. +z를 위로 눕히면 거울상이 되고, <strong>거울상 ArUco는 아예 디코딩되지 않습니다</strong> —
+          보드는 완벽하게 렌더되는데 코너가 0개 나옵니다.
+        </p>
+      </li>
+      <li>
+        <p class="defect-title">포즈 생성기의 두 가지 잘못된 제약</p>
+        <p class="defect-body">
+          테이블 간섭 검사에 <code>base</code> 링크를 포함해서 <strong>자세와 무관하게 전부 탈락</strong>했고,
+          보드 <strong>전체</strong> 가시를 요구해서 손목캠 후보가 0개였습니다. ChArUco는 부분 검출이 가능한 것이 장점입니다.
+          고친 뒤: wrist 24포즈(최소 회전차 18.6°), front 24포즈(76.3°).
+        </p>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ============ 4. 현장 실행 ============ -->
+  <section>
+    <h2>현장에서 할 일</h2>
+    <p class="section-note">
+      의존 순서대로입니다. 체크박스는 이 브라우저에만 저장되니 진행 추적용으로 쓰세요.
+      Isaac을 쓰는 스크립트는 <strong>반드시 <code>python -u</code></strong>로 실행합니다 — Kit이 종료하면서
+      버퍼된 stdout을 버리기 때문에 그냥 돌리면 출력이 통째로 사라집니다.
+    </p>
+
+    <!-- step 0 -->
+    <div class="step" data-step="0">
+      <div class="step-head">
+        <span class="step-no">00</span>
+        <h3 class="step-title">환경 준비</h3>
+        <label class="tick"><input type="checkbox"> 완료</label>
+      </div>
+      <div class="step-body">
+        <div class="cmd">
+          <button class="copy" type="button">copy</button>
+          <pre>cd ~/workspace/research/so101-team
+git pull
+pip install -e '.[real]'   <span class="hash"># opencv-python-headless, pyyaml 추가됨</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- step 1 -->
+    <div class="step" data-step="1">
+      <div class="step-head">
+        <span class="step-no">01</span>
+        <h3 class="step-title">타겟 인쇄 · 부착 <span class="chip chip-site">#12</span></h3>
+        <label class="tick"><input type="checkbox"> 완료</label>
+      </div>
+      <div class="step-body">
+        <p>모든 현장 작업의 블로커입니다. 이것부터 끝나야 나머지가 시작됩니다.</p>
+        <div class="cmd">
+          <button class="copy" type="button">copy</button>
+          <pre>python scripts/make_calibration_targets.py
+<span class="hash"># → calibration/targets/table_charuco.pdf   (A4 가로, 210×150 mm)</span>
+<span class="hash"># → calibration/targets/gripper_aruco.pdf  (A4 세로, 30 mm 태그 ×3)</span></pre>
+        </div>
+
+        <div class="note note-warn">
+          <strong>배율 100%로 인쇄.</strong> 프린터 대화상자의 "페이지에 맞춤" / "scale to fit"을
+          반드시 끄세요. 켜면 치수가 틀어지고 이후 모든 숫자가 조용히 틀립니다.
+          <strong>무광 용지</strong>만 — 광택지는 조명 반사로 검출이 실패합니다.
+        </div>
+
+        <div class="criteria">
+          <h4>확인할 것</h4>
+          <ul>
+            <li>페이지 하단 <strong>100 mm 기준자</strong>를 자로 측정. 정확히 100 mm가 아니면 재인쇄하거나, 실측 사각 크기를 이후 명령에 <code>--square-mm</code>으로 전달</li>
+            <li>테이블 보드는 평판에 <strong>기포 없이</strong> 부착 — 휘면 평면 가정이 깨집니다</li>
+            <li>그리퍼 태그 2~3장을 <strong>서로 다른 각도</strong>로 작은 큐브/브래킷에 고정. 단일 평면 태그는 정면에서 회전 추정이 튀고, 그 오차가 hand-eye 해에 그대로 들어갑니다</li>
+            <li>보드 ID 0–16, 그리퍼 ID 20–22로 겹치지 않으니 둘이 같이 보여도 무방</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- step 2 -->
+    <div class="step" data-step="2">
+      <div class="step-head">
+        <span class="step-no">02</span>
+        <h3 class="step-title">카메라 동작 확인</h3>
+        <label class="tick"><input type="checkbox"> 완료</label>
+      </div>
+      <div class="step-body">
+        <div class="cmd">
+          <button class="copy" type="button">copy</button>
+          <pre>python scripts/view_cameras.py --snapshot
+<span class="hash"># → outputs/camera_views/{front,wrist}_rect_000.png</span></pre>
+        </div>
+        <p>
+          이미지에 노출 잠금값과 검출 결과가 오버레이됩니다. 보드를 놓고
+          <code>board corners</code> 수가 올라가는지 확인하세요.
+        </p>
+        <div class="note">
+          설치된 OpenCV가 headless 빌드라 <strong>창이 뜨지 않습니다.</strong> 기본 동작이 파일 저장이고,
+          <code>--show</code>는 데스크톱 빌드가 설치된 경우에만 동작합니다.
+        </div>
+      </div>
+    </div>
+
+    <!-- step 3 -->
+    <div class="step" data-step="3">
+      <div class="step-head">
+        <span class="step-no">03</span>
+        <h3 class="step-title">intrinsic 촬영 <span class="chip chip-site">#13</span></h3>
+        <label class="tick"><input type="checkbox"> 완료</label>
+      </div>
+      <div class="step-body">
+        <div class="cmd">
+          <button class="copy" type="button">copy</button>
+          <pre>python scripts/calibrate_intrinsics.py --camera front
+python scripts/calibrate_intrinsics.py --camera wrist
+
+<span class="hash"># 인쇄 사각이 30 mm가 아니었다면</span>
+python scripts/calibrate_intrinsics.py --camera front --square-mm 29.7
+
+<span class="hash"># 이미 찍은 사진으로 다시 풀기만</span>
+python scripts/calibrate_intrinsics.py --camera front --solve-only</pre>
+        </div>
+        <p>
+          <kbd>Enter</kbd>로 촬영, <code>q</code>로 종료, <code>d</code>로 직전 장 삭제.
+          매 장마다 <strong>어느 영역이 아직 비었는지</strong>와 <strong>기울인 장수</strong>를 알려줍니다.
+        </p>
+
+        <div class="criteria">
+          <h4>촬영 프로토콜</h4>
+          <ul>
+            <li><strong>640×480에서 직접</strong> 촬영 (스크립트가 강제). 720p로 찍고 K를 스케일하면 안 됩니다 — USB 카메라는 해상도 모드마다 센서 크롭·비닝이 달라 실효 FOV가 바뀝니다</li>
+            <li>15~25장, 보드가 <strong>각 사분면과 중앙</strong>을 덮도록</li>
+            <li>광축 대비 <strong>±30~45° 기울임 5장 이상</strong>. 정면만 찍으면 초점거리와 거리가 얽혀 fx가 불안정해집니다</li>
+            <li>화면의 1/3~2/3을 채우는 여러 거리에서</li>
+          </ul>
+        </div>
+
+        <div class="criteria">
+          <h4>합격 기준 — 셋 다 통과해야 yaml이 써집니다</h4>
+          <ul>
+            <li>OpenCV RMS 재투영 <strong>&lt; 0.3 px</strong></li>
+            <li>프레임 전 영역 커버</li>
+            <li>25° 이상 기울인 장 <strong>5장 이상</strong></li>
+          </ul>
+          <p style="margin:10px 0 0;color:var(--ink-soft);font-size:13.5px">
+            불합격이면 <code>*.rejected.yaml</code>로 떨어지고 정식 파일은 건드리지 않습니다.
+          </p>
+        </div>
+
+        <div class="note note-warn">
+          출력의 <strong>hFOV 손실</strong>을 보세요. <strong>10% 초과</strong>면 이슈 #16 분기 1 —
+          rectify 대신 Isaac Sim의 <code>opencvPinhole</code>로 왜곡을 모델링할지 검토해야 합니다.
+        </div>
+      </div>
+    </div>
+
+    <!-- step 4 -->
+    <div class="step" data-step="4">
+      <div class="step-head">
+        <span class="step-no">04</span>
+        <h3 class="step-title">hand-eye extrinsic <span class="chip chip-site">#14</span></h3>
+        <label class="tick"><input type="checkbox"> 완료</label>
+      </div>
+      <div class="step-body">
+        <div class="note note-stop">
+          <strong>사람이 입회해야 합니다.</strong> 시뮬레이션은 케이블, 클램프, front 카메라 마운트를
+          모릅니다. 첫 재생은 정지 버튼에 손을 올린 채로 지켜보세요.
+        </div>
+
+        <p><strong>촬영</strong> — 수동으로 팔을 놓거나, 검증된 24포즈를 재생합니다.</p>
+        <div class="cmd">
+          <button class="copy" type="button">copy</button>
+          <pre><span class="hash"># 수동: 팔을 직접 놓고 Enter</span>
+python scripts/calibrate_handeye.py --camera front --capture
+
+<span class="hash"># 자동 재생: sim에서 충돌·가시성 검증된 포즈. 'move' 입력 확인 후 진행</span>
+python scripts/calibrate_handeye.py --camera front --capture --replay</pre>
+        </div>
+
+        <p><strong>해석</strong> — Isaac을 띄워 FK를 얻고 솔버 5종을 돌립니다.</p>
+        <div class="cmd">
+          <button class="copy" type="button">copy</button>
+          <pre>python -u scripts/calibrate_handeye.py --camera front --solve
+python -u scripts/calibrate_handeye.py --camera wrist --solve</pre>
+        </div>
+
+        <div class="criteria">
+          <h4>타겟 배치</h4>
+          <ul>
+            <li><strong>front</strong> (eye-to-hand) — 그리퍼에 ArUco 태그. 테이블 보드는 필요 없음</li>
+            <li><strong>wrist</strong> (eye-in-hand) — 테이블에 ChArUco 보드 고정. 재생 중 절대 움직이면 안 됨</li>
+          </ul>
+        </div>
+
+        <div class="criteria">
+          <h4>결과에서 확인할 것</h4>
+          <ul>
+            <li><strong>솔버 간 편차</strong> — 10 mm 초과면 경고가 뜹니다. 그건 솔버가 아니라 <strong>포즈 다양성이나 기구학</strong> 문제이니 재촬영하세요</li>
+            <li><strong>rig scatter</strong> — 고정돼 있어야 할 변환의 흩어짐. 크면 타겟이 움직였거나 FK가 실물과 다릅니다</li>
+            <li>기존 상수와의 비교 — wrist 코드값 <code>(-0.005, -0.060, -0.062)</code>과 USD 메시 <code>(-0.0039, -0.0257, -0.0290)</code>은 3.4 cm 어긋나 있으니 <strong>sanity bound로만</strong> 쓰고, 실측이 둘 다와 크게 다르면 원인을 확인하세요</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- step 5 -->
+    <div class="step" data-step="5">
+      <div class="step-head">
+        <span class="step-no">05</span>
+        <h3 class="step-title">정합 게이트 <span class="chip chip-site">#15</span></h3>
+        <label class="tick"><input type="checkbox"> 완료</label>
+      </div>
+      <div class="step-body">
+        <p>이 작업 전체의 합격 판정입니다.</p>
+        <div class="cmd">
+          <button class="copy" type="button">copy</button>
+          <pre><span class="hash"># 빠른 사전검사 — 렌더러를 거치지 않음</span>
+python scripts/verify_alignment.py --camera front --quick \
+    --real-image outputs/handeye/front/pose_000.png
+
+<span class="hash"># 정식 게이트 — Isaac이 그린 픽셀과 비교</span>
+python -u scripts/verify_alignment.py --camera front --gate \
+    --real-image &lt;보드가 보이는 프레임&gt;
+<span class="hash"># → outputs/verify/gate_overlay_front.png</span></pre>
+        </div>
+
+        <div class="note note-warn">
+          <strong>보드를 카메라 쪽으로 기울여 세우세요.</strong> 테이블에 눕히면 front 카메라에서 너무 비스듬해
+          sim 렌더의 마커 셀이 약 4 px로 떨어지고 검출이 실패합니다. 깨끗한 다운샘플링에서는 2.4 px/셀까지
+          검출되므로 <strong>인쇄물 사양 문제가 아니라 렌더 경로의 한계</strong>입니다 — 타겟을 다시 만들 필요는 없습니다.
+        </div>
+
+        <div class="criteria">
+          <h4>합격 기준</h4>
+          <ul>
+            <li>재투영 <strong>RMSE &lt; 3 px @ 640×480</strong> — wrist·front 각각</li>
+            <li>오버레이 이미지로 정성 확인</li>
+            <li><code>--drift</code> 베이스라인 기록 (이후 세션 체크의 기준선)</li>
+          </ul>
+        </div>
+
+        <div class="criteria">
+          <h4>불합격 시 진단 순서</h4>
+          <ul>
+            <li><code>--quick</code>은 통과하는데 <code>--gate</code>가 실패 → <strong>Isaac 쪽</strong>. focal_length 환산, <code>convention="ros"</code>, <code>T_env_base</code> 확인</li>
+            <li>둘 다 실패 → <strong>측정 쪽</strong>. intrinsic RMS, 솔버 편차, 교차검증 차이를 순서대로</li>
+            <li><code>--selftest</code>를 다시 돌려 파이프라인 자체가 멀쩡한지 확인 — 참값을 아는 환경에서 실패하면 코드 버그입니다</li>
+            <li>오버레이에서 <strong>일정한 평행 이동</strong>은 extrinsic, <strong>배율 차이</strong>는 focal length를 가리킵니다</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- step 6 -->
+    <div class="step" data-step="6">
+      <div class="step-head">
+        <span class="step-no">06</span>
+        <h3 class="step-title">조건부 대응 <span class="chip chip-site">#16</span></h3>
+        <label class="tick"><input type="checkbox"> 해당 없음 / 완료</label>
+      </div>
+      <div class="step-body">
+        <p>발동 조건이 충족될 때만. 미리 정해뒀으니 현장에서 즉흥 판단할 필요가 없습니다.</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>발동 조건</th><th>대응</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>rectify 후 hFOV 손실 &gt; 10%</td>
+                <td>Isaac Sim 5.1의 <code>OmniLensDistortionOpenCvPinholeAPI</code>로 왜곡을 sim에 주입하는 경로 검토. 단 IsaacLab의 <code>intrinsic_matrices</code>가 거짓을 보고하게 되는 문제를 함께 처리해야 함</td>
+              </tr>
+              <tr>
+                <td>스폰 영역이 화면에서 잘림</td>
+                <td><strong>실물 카메라를 물리적으로 재배치하고 재캘리브레이션.</strong> 스폰 범위를 줄이거나 정책에 가림을 떠넘기지 않음<br>
+                <span style="color:var(--ink-soft)">— 현재 front는 스폰 영역 전체를 u 229–383, v 185–307에 담고 있어 <strong>발동하지 않습니다</strong></span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 5. 남은 것 ============ -->
+  <section>
+    <h2>알려진 한계와 남은 결정</h2>
+
+    <ul class="plain">
+      <li>
+        <strong>#8 wrist 렌더 셀프테스트 미해결 <span class="chip chip-open">열림</span></strong> —
+        손목캠이 테이블에 가까워 front와 같은 0.32 m 배치는 보드가 가려지고, 0.14 m로 줄였더니
+        실패가 아니라 <strong>900초 타임아웃으로 멈췄습니다</strong>. 원인 미파악.
+        wrist의 수학 자체는 <code>selftest_pipeline.py</code>가 렌더러 없이 커버하므로 현장 작업은 막히지 않습니다.
+      </li>
+      <li>
+        <strong>재학습은 확정적</strong> — 실물 front 프레임을 보니 구도가 sim과 상당히 다릅니다.
+        정합 후 sim 카메라가 크게 움직이므로, 시각 정책을 만들 때는 새 pose로 데이터를 재생성해야 합니다.
+        (현재 레포에 학습된 시각 정책은 없습니다. <code>main.py</code>·<code>agents/</code>는 전부 state-only입니다.)
+      </li>
+      <li>
+        <strong>Orbbec은 화이트밸런스를 V4L2로 노출하지 않습니다</strong> — front의 색 균형은 자동으로 남습니다.
+        가정 대신 yaml의 <code>exposure.unsupported_controls</code>에 기록됩니다.
+      </li>
+      <li>
+        <strong>실물 큰 큐브가 초록색</strong>, sim은 파랑 <code>(0.15, 0.35, 0.85)</code>.
+        photometric은 이번 범위에서 실측 기록만 하기로 했으므로 남겨둡니다.
+      </li>
+      <li>
+        <strong>temporal(30 Hz 동기·지연)은 별도 세션</strong>으로 미뤄둔 상태입니다.
+      </li>
+    </ul>
+  </section>
+
+  <footer>
+    sseongsukim/so101 · 브랜치 dsafjk0024 · 이슈 #17이 EPIC
+  </footer>
+
+</div>
+
+<script>
+  (function () {
+    // Copy buttons: the clipboard API is the happy path, with a selection
+    // fallback for contexts that refuse it.
+    document.querySelectorAll(".cmd").forEach(function (block) {
+      var button = block.querySelector(".copy");
+      var pre = block.querySelector("pre");
+      if (!button || !pre) return;
+      button.addEventListener("click", function () {
+        var text = pre.innerText;
+        var done = function () {
+          button.textContent = "copied";
+          button.setAttribute("data-state", "ok");
+          window.setTimeout(function () {
+            button.textContent = "copy";
+            button.removeAttribute("data-state");
+          }, 1600);
+        };
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done, function () { legacy(text, done); });
+          } else {
+            legacy(text, done);
+          }
+        } catch (err) {
+          legacy(text, done);
+        }
+      });
+    });
+
+    function legacy(text, done) {
+      try {
+        var area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        document.body.removeChild(area);
+        done();
+      } catch (err) {
+        /* leave the button alone; the text is selectable either way */
+      }
+    }
+
+    // Step ticks. Per-viewer convenience only, so a storage failure is fine.
+    var KEY = "so101-alignment-steps";
+    var saved = {};
+    try {
+      saved = JSON.parse(window.localStorage.getItem(KEY) || "{}") || {};
+    } catch (err) {
+      saved = {};
+    }
+
+    document.querySelectorAll(".step").forEach(function (step) {
+      var id = step.getAttribute("data-step");
+      var box = step.querySelector(".tick input");
+      if (!box) return;
+      if (saved[id]) {
+        box.checked = true;
+        step.classList.add("is-done");
+      }
+      box.addEventListener("change", function () {
+        step.classList.toggle("is-done", box.checked);
+        saved[id] = box.checked;
+        try {
+          window.localStorage.setItem(KEY, JSON.stringify(saved));
+        } catch (err) {
+          /* nothing to do; the tick still works for this visit */
+        }
+      });
+    });
+  })();
+</script>
+</body>
+</html>
