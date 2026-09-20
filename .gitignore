@@ -223,6 +223,10 @@ calibration/*
 !calibration/cameras/
 # Hand-eye pose sequences are validated design output, replayed on the rig.
 !calibration/handeye_poses/
+# The board geometry MUST be tracked: without it the detector silently falls
+# back to defaults that do not match the printed sheet, and every measured
+# distance comes out scaled.
+!calibration/board.yaml
 
 # PyPI configuration file
 .pypirc
