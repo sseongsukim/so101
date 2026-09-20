@@ -221,6 +221,8 @@ calibration/*
 # layer both read these files, and they record which geometry a policy was
 # trained against.  Generated print targets stay ignored.
 !calibration/cameras/
+# Hand-eye pose sequences are validated design output, replayed on the rig.
+!calibration/handeye_poses/
 
 # PyPI configuration file
 .pypirc

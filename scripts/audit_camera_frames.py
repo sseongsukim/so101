@@ -25,6 +25,14 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path as _Path
+
+# so101 is installed editable from a sibling checkout, so an unqualified
+# import silently resolves there instead of to this working tree.  The .pth
+# only appends to sys.path, so putting this repo's src first wins.
+sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "src"))
+
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
