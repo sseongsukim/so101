@@ -372,6 +372,61 @@
     color: var(--ink-faint);
   }
 
+  /* ---------- tag explainer ---------- */
+  .mounts, .anats { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 18px; margin-block: 18px; }
+  @media (max-width: 620px) { .mounts, .anats { grid-template-columns: 1fr; } }
+  .mount, .anat { margin: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px; }
+  .mount svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .s-table { fill: var(--rule-strong); }
+  .s-cam   { fill: var(--accent); }
+  .s-target{ fill: var(--ink); }
+  .s-ray   { stroke: var(--accent); stroke-width: 1; fill: none; stroke-dasharray: 3 3; opacity: .6; }
+  .s-arm   { stroke: var(--ink-faint); stroke-width: 2.5; fill: none; }
+  .s-lbl   { font-family: var(--mono); font-size: 8.5px; fill: var(--ink-faint); }
+  .mount figcaption, .anat figcaption { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; font-size: 13px; color: var(--ink-soft); }
+  .mount figcaption b, .anat figcaption b { font-family: var(--cond); font-size: 16px; color: var(--ink); }
+  .anat img { width: 100%; height: auto; display: block; border-radius: 3px; }
+
+  .ladders { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 18px; margin-block: 18px; }
+  @media (max-width: 760px) { .ladders { grid-template-columns: 1fr; } }
+  .ladder { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; }
+  .ladder h4 { font-family: var(--cond); font-size: 16px; margin: 0 0 12px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .ladder h4 span { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--ink-faint); }
+  .rungs { display: flex; flex-direction: column; gap: 9px; }
+  .rung { display: grid; grid-template-columns: 72px 44px 48px 1fr 38px; align-items: center; gap: 7px; }
+  .rung-img { display: flex; justify-content: center; align-items: center; }
+  .rung-img img { image-rendering: pixelated; display: block; max-width: 100%; height: auto; }
+  .rung-px { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .rung-cell { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  .rung-bar { background: var(--surface-sunk); border-radius: 2px; height: 7px; overflow: hidden; }
+  .rung-bar span { display: block; height: 100%; background: var(--pass); }
+  .rung-rate { font-family: var(--mono); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+  .rung.is-weak .rung-bar span { background: var(--warn); }
+  .rung.is-dead .rung-bar span { background: var(--fail); }
+  .rung.is-dead .rung-px, .rung.is-dead .rung-rate { color: var(--fail); }
+
+  .formula { font-family: var(--mono); font-size: 13.5px; background: var(--surface-sunk); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 0 4px 4px 0; margin-block: 14px; overflow-x: auto; }
+
+  .calc { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 18px; margin-block: 18px; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 22px; }
+  @media (max-width: 680px) { .calc { grid-template-columns: 1fr; } }
+  .calc-controls { display: flex; flex-direction: column; gap: 14px; }
+  .calc-controls label { display: flex; flex-direction: column; gap: 5px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+  .calc-controls output { font-size: 13px; color: var(--ink); letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
+  .calc-controls input[type=range] { accent-color: var(--accent); width: 100%; }
+  .calc-controls select { font-family: var(--sans); font-size: 13px; padding: 6px 8px; border: 1px solid var(--rule-strong); border-radius: 4px; background: var(--paper); color: var(--ink); text-transform: none; letter-spacing: 0; }
+  .calc-controls input:focus-visible, .calc-controls select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .calc-out { display: flex; flex-direction: column; gap: 14px; }
+  .calc-preview { background: var(--surface-sunk); border-radius: 4px; min-height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 14px; }
+  .calc-preview img { image-rendering: pixelated; display: block; max-width: 100%; height: auto; }
+  .calc-cap { font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+  .calc-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 0; }
+  .calc-nums div { display: flex; flex-direction: column; gap: 2px; }
+  .calc-nums dt { font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+  .calc-nums dd { margin: 0; font-family: var(--mono); font-size: 17px; font-variant-numeric: tabular-nums; }
+  .calc-verdict { margin: 0; font-size: 13.5px; line-height: 1.5; padding: 10px 12px; border-radius: 4px; background: var(--pass-soft); color: var(--pass); max-width: none; }
+  .calc-verdict[data-level="weak"] { background: var(--warn-soft); color: var(--warn); }
+  .calc-verdict[data-level="bad"]  { background: var(--fail-soft); color: var(--fail); }
+
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
   }
@@ -656,6 +711,278 @@
         </p>
       </li>
     </ol>
+  </section>
+
+  <!-- ============ 3.5 태그 고르기 (시각화) ============ -->
+  <section id="tags">
+    <h2>태그를 어떻게 고르는가</h2>
+    <p class="section-note">
+      AprilTag로 바꿀지 판단하려면 숫자 하나만 보면 됩니다 — <strong>태그 한 칸이 카메라에서 몇 픽셀을 차지하는가.</strong>
+      아래는 설명용 그림이 아니라, 실제로 태그를 렌더하고 실제 검출기를 돌려 나온 결과입니다.
+    </p>
+
+    <h3>1. 태그는 어디에 붙고, 무엇을 알려주나</h3>
+    <p>
+      카메라가 태그를 보면 <code>solvePnP</code>가 <strong>태그가 카메라 기준 어디에 어떤 자세로 있는지</strong>를 돌려줍니다.
+      그 관계를 여러 로봇 자세에서 모으면 카메라가 어디에 달렸는지 풀 수 있습니다.
+      두 카메라는 붙는 위치가 정반대입니다.
+    </p>
+
+    <div class="mounts">
+      <figure class="mount">
+        <svg viewBox="0 0 260 152" role="img" aria-label="손목 카메라는 팔에 달리고 보드는 테이블에 고정됩니다">
+          <rect x="20" y="114" width="220" height="9" rx="2" class="s-table"/>
+          <rect x="130" y="100" width="80" height="14" rx="2" class="s-target"/>
+          <text x="170" y="141" class="s-lbl" text-anchor="middle">보드 — 테이블 고정</text>
+          <path d="M56 30 L56 14 M42 14 L70 14" class="s-arm"/>
+          <text x="56" y="9" class="s-lbl" text-anchor="middle">팔 (움직임)</text>
+          <rect x="38" y="30" width="36" height="27" rx="4" class="s-cam"/>
+          <path d="M74 44 L130 100 M74 44 L152 100" class="s-ray"/>
+          <text x="104" y="76" class="s-lbl">본다</text>
+        </svg>
+        <figcaption><b>wrist — eye-in-hand</b><span>카메라가 움직이고, 보드는 고정</span></figcaption>
+      </figure>
+      <figure class="mount">
+        <svg viewBox="0 0 260 152" role="img" aria-label="전방 카메라는 책상에 고정되고 태그는 그리퍼에 붙습니다">
+          <rect x="20" y="114" width="220" height="9" rx="2" class="s-table"/>
+          <rect x="186" y="26" width="36" height="27" rx="4" class="s-cam"/>
+          <path d="M204 53 L204 114" class="s-arm"/>
+          <text x="204" y="141" class="s-lbl" text-anchor="middle">고정 마운트</text>
+          <path d="M186 40 L104 62 M186 46 L104 92" class="s-ray"/>
+          <text x="128" y="86" class="s-lbl">본다</text>
+          <rect x="76" y="62" width="28" height="28" rx="2" class="s-target"/>
+          <path d="M90 62 L90 40 M76 40 L104 40" class="s-arm"/>
+          <text x="90" y="33" class="s-lbl" text-anchor="middle">그리퍼 (움직임)</text>
+        </svg>
+        <figcaption><b>front — eye-to-hand</b><span>카메라가 고정되고, 태그가 움직임</span></figcaption>
+      </figure>
+    </div>
+
+    <h3>2. 셀이 무엇이고, 왜 개수가 중요한가</h3>
+    <p>
+      태그는 흑백 정사각형(셀)의 격자입니다. 가운데가 <strong>데이터 비트</strong>이고, 그 바깥을
+      <strong>검은 테두리 1셀</strong>이 둘러쌉니다. 검출기는 테두리로 사각형을 먼저 찾고,
+      안쪽 비트를 한 칸씩 읽어 ID를 해독합니다. <strong>한 칸이 최소 몇 픽셀은 되어야 읽힙니다.</strong>
+    </p>
+
+    <div class="anats">
+      <figure class="anat">
+          <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAATgAAAE4CAIAAABAHXg9AAAEH0lEQVR42u3YsXHqQBRAUfhDH5DafchFQLIKaEFFqAUClEhFQB84lSrZHziRSb0zbwfOyZQsj9VeI3mbc94AdftnC0CogFBBqIBQAaGCUAGhAkIFoQJCBaECQgWECkIFhAoIFYQKCBUQKggVECoIFajFrtRC7bQEfo1uOK8v+3Rxa99ZPefhetzXFepmsxlOh7Ab0zSVTJLGOfDTzVDVeUjj7NEXvKMCQgWECkIFhAoIFYQKCBWECggVECoIFRAqIFQQKiBUQKggVECoIFRAqIBQQaiAUAGhglABoYJQAaECQgWhAkIFhApCBYQKCBWECggVhArUZVdqoW44d01Tybd6xE3Sh366Gao6D71fVPDoCwgVECq8nmL/TOrTZTgdor7G038LPm63sB2dls/7PfamprR58xmezkPUJCn5RQWPvoBQAaGCUAGhAkIFoQJCBaECQgWECkIFhAoIFYQKCBUQKggVECoIFRAqIFQQKiBUQKggVECoIFRAqIBQQaiAUAGhglABoQJCBaECQgWhApXZ5pyLLNROi92kEt1wXl/26RI1yfW4L7LOruBMw+kQtR2Ppllfft7vUZOkcS51b/7yR7OGGQLPQ/f7PERNksbZoy94RwWECggVhAoIFRAqCBUQKggVECogVBAqIFRAqCBUQKiAUEGogFBBqIBQAaGCUAGhAkIFoQJCBaECQgWECkIFhAoIFYQKCBUQKggVECoIFRAqIFR4Pducc5GF2mmxm1SiG87ryz5doia5HvdF1tkVnGk4HaK249E068uP2y1qknZaAvfhRxrnN5+h+30eoiZJ4+zRF7yjAkIFhApCBYQKCBWECggVhAoIFRAqCBUQKiBUECogVECoIFRAqCBUQKiAUEGogFABoYJQAaGCUAGhAkIFoQJCBYQKQgWECggVhAoIFYQKCBUQKryebc65yELttNhNKtEN5/Vlny5Rk1yP+yLr7ArONJwOUdvxaJr15cftFjVJOy2B+/AjjXOp8/GXfQic4Xuo4mSmcfboC95RAaECQgWhAkIFhApCBYQKQgWECggVhAoIFRAqCBUQKiBUECogVBAqIFRAqCBUQKiAUEGogFBBqIBQAaGCUAGhAkIFoQJCBYQKQgWECkIF6rLNORdZ6Pvry27CWp8u1+PeLyp49AWECggVXsqu4HvzcDpEfY1H06wvP+/3qEnSOAfugxmqOg8p+UUFj76AUAGhglABoQJCBaECQgWhAkIFhApCBYQKCBWECggVECoIFRAqCBUQKiBUECogVECoIFRAqCBUQKiAUEGogFABoYJQAaECQgWhAkKF97LNORdZqJ0WuwlPrsd9XaECHn1BqIBQAaGCUAGhAkIFoQJCBYQKQgWECkIFhAoIFYQKCBUQKggVECoIFRAqIFR4A/8BLOOshw0zfYIAAAAASUVORK5CYII=" alt="ArUco DICT_4X4_50 태그에 셀 격자를 겹친 그림">
+          <figcaption>
+            <b>ArUco DICT_4X4_50</b>
+            <span>데이터 비트 4×4 · 검은 테두리 1셀 → <strong>실제 격자 6×6</strong></span>
+            <span>ID 50개 · 오류 정정 1비트</span>
+          </figcaption>
+        </figure>
+      <figure class="anat">
+          <img src="data:image/png;base64,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" alt="AprilTag 36h11 태그에 셀 격자를 겹친 그림">
+          <figcaption>
+            <b>AprilTag 36h11</b>
+            <span>데이터 비트 6×6 · 검은 테두리 1셀 → <strong>실제 격자 8×8</strong></span>
+            <span>ID 587개 · 오류 정정 0비트</span>
+          </figcaption>
+        </figure>
+    </div>
+
+    <div class="note">
+      두 그림은 <strong>같은 크기로 인쇄한 태그</strong>입니다. AprilTag 36h11은 같은 종이를
+      <strong>8×8</strong>로 쪼개니 한 칸이 더 작습니다 — 그래서 더 가까이 가거나 더 크게 인쇄해야 합니다.
+      빨간 선 바깥의 <strong>테두리도 셀에 포함된다</strong>는 점이 자주 간과됩니다.
+    </div>
+
+    <h3>3. 멀어지면 실제로 이렇게 보입니다</h3>
+    <p>
+      태그를 각 픽셀 크기로 실제 축소한 뒤 그대로 확대한 것입니다 — 보간 없이, 검출기가 보는 그대로.
+      막대는 <strong>ID 20종 × 서브픽셀 오프셋 3종 = 60회</strong> 시행의 검출 성공률입니다.
+    </p>
+
+    <div class="ladders">
+      <div class="ladder">
+          <h4>ArUco DICT_4X4_50 <span>격자 6×6</span></h4>
+          <div class="rung"><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAABHklEQVR42u3dwRGCQAxA0ehQBo1QCLRFH2whNEIhHnL1RNRVfO8OjvPJcCAMEQAAAAAAAABc1a1y8DiOETFN0+kz7PseEcdx/G2Au2uwr6FycF7727adPsOyLBHRWjMBCCAAAgiAAAIggAAIIAACCIAAAiCAAAggAK/XeSsij83zfF7uZKzragJMQCe5UTHPc5dfz22M3MwwAW7CCCAAAgiAAAIggAAIIAACCIAAAiCAAAhwQaVnwvks15vyJkAABBAAAQRAAAEQQAAEEAABBEAAARBAAAT4UsOv/4Fe7xin+vcPTIAJqKnsZNTVtzpMgJuwAAggAAIIgAACIIAACCAAAgiAAAIggAC8UefvB9S3CmxFAAAAAAAAAABPPQASEDVfx31PnQAAAABJRU5ErkJggg==" width="128" alt="64픽셀로 축소된 태그"></div>
+            <div class="rung-px">64 px</div>
+            <div class="rung-cell">10.7/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAAAmklEQVR42u3aywkAIQxAQSP233KsIYeAn3l3cXfIKTiGJEmSJEmSfiqqBzKzdkHE1UDTjAACBAgQIECAAAkQIECAAAF6q/ZlTXV/VP6B5n2TCQIECBAgQIAAARIgQIAAAQL0WN4HmSBAgAABAgQIkAABAgQIECBAf7VO+6DT3hOZIECAAAECBAgQIAECBAgQIECSJEmSJEnSxW3+gwyAAq9JegAAAABJRU5ErkJggg==" width="96" alt="48픽셀로 축소된 태그"></div>
+            <div class="rung-px">48 px</div>
+            <div class="rung-cell">8.0/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAIAAAC2BqGFAAABFUlEQVR42u3dsQ2DMBBAURIxhhdhEFiLPcwgLMIgKZCuz1kCGd6raJxEX9Y1pyTDAAAAAAAAwH8+uWOllPNhmqbE8X3fz4fjOF4S+uuuCf0oY+5YTIxaa+L4siznw7ZtbjRCC43QQguN0EIjtNBCI7TQCC200Ajdm3uWs3EqXucCsRFe19WNNjq4ZXQ0ipXuPM+XvWksgmM17EYbHQgtNEILLTRCC43QQguN0EIjtNBCk5LcsMRmxNff3GihhUZooRFaaKERWmiEFlpohBYaoYV+n7HHD33lN19C4++putFGh9Fxu9xGuFHjQtmNNjqERmihhZZAaKERWmihEVpohBZaaIR+kC7/ONJyFqEBAAAAAADozQ/WrjVXoMqVigAAAABJRU5ErkJggg==" width="120" alt="40픽셀로 축소된 태그"></div>
+            <div class="rung-px">40 px</div>
+            <div class="rung-cell">6.7/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIgAAACICAIAAACz2DQFAAABNklEQVR42u3dsQ2DMBBAUSdiDC/iQWAt9oBBWIRB0qHrkLAFJnqvogGRfBkKTpASAAAAAAAAAPBGn5qdc87Hdinl8nG2bTu2931XJaX09RcIgzDvN9TsHO8ry7JcPs40Tcf2uq6qWDHCIIwwCCMMwiCMMAgjDMIgjDAIIwzCCIMwnOtirizuG495pzjbNs+zFYMwwvDwPaaVOJM2juMj5xDn2eKcmxWDMMIgjDAIIwzCIIwwCCMMwiCMMAgjDMIgTKeqnvnH5/PeJWPFCIMwCCMMwgiDMMIgDMIIgzDCIAzCCIMwwnCr4Z9+zFPvCIhafW/NinEpQxj3mL7UzLa10mpGzopxKUMYYRBGGIRBGGEQRhiEQRhhEEYYhBEGYTjRxTfKWs1imSvDpUwYAAAAAAAAAACq/QATnzVvqF3sMQAAAABJRU5ErkJggg==" width="136" alt="34픽셀로 축소된 태그"></div>
+            <div class="rung-px">34 px</div>
+            <div class="rung-cell">5.7/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHAAAABwCAIAAABJgmMcAAABD0lEQVR42u3dsQ2DMBBAURIxBot4EFiLPcwgXoRB0qFrLQsw4b2KIiTRl03BoWQYAAAAAADe4VN7wjRNx3FKqercUspxvO/7Xwb9WlOCCvomY+0J8bqZc646d1mW43jbNisUQQUVFEEFFVRQBBVUUAQVVFAEvdKlM6X4+vg+Z4jzq3VdrVBbHkG7uIa2iDOoeZ5P/aw4s4qzLCvUlhcUQQUVFEEFFRRBBRUUQQUV9LWq74fG+5iesbdCBRVUUAQVVFAEFVRQBBVUUAQV9EHGp3zRs58njVp+X8oKteUFdQ3tUe38qkXL7MsKteUFFRRBBRUUQQUVFEEFFVRQBO3WY/4LxEzJlkdQAAAAAABu8wM04zVPqi3jlQAAAABJRU5ErkJggg==" width="112" alt="28픽셀로 축소된 태그"></div>
+            <div class="rung-px">28 px</div>
+            <div class="rung-cell">4.7/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAIAAAC2BqGFAAAAv0lEQVR42u3bQQ7AIAgAQTH9/5fpH+Qghpl703ZDvBDXAgAAAAAAACaLysOZef7iiFGht1kTWmiEFlpohBYaoYUWGqGFRmihhUZooRG6p2uLu8q+sfTDl3aVJlpooRFaaKElEFpohBZaaIQWGqGFFhqhhUboptwzNNFCI7TQQksgtNAILbTQCC00QgstNEILjdBCz/a9+NEv3lE00Y4OoRFaaKElEFpohBZaaIQWGqGFFhqhhUZoAAAAAAAAgIZ+4eAMoKxLM2AAAAAASUVORK5CYII=" width="120" alt="24픽셀로 축소된 태그"></div>
+            <div class="rung-px">24 px</div>
+            <div class="rung-cell">4.0/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAIAAAC2BqGFAAABJ0lEQVR42u3cwQmDMBiAUVNcykF0DydxDx3ERRyk9/wHNaSh4ntHwRo+Qghq7ToAAAAAAADuSWWnzfOcHRmG4fSsfd+zI8uyvCT0x1wTWmiEFvrt+rLT4h5jHMeC37HrQGihEVpooRFaaIQWWmiqKrzXEZ+VXHEcR3ak7A5JrTHH8ZjRlg6EFlpofia1vFjcY6zr2uzq0zRlR7ZtM6MtHQgtNEILLTRCC43QQguN0EILLYHQQnNf4Xsd8cnIlTc04hONlJIZjdBCI7TQQiO00AgttNAILTRCCy00Qj9N/8RBt/znS63vqZrRlg6hEVpou44nDrrlVz4iuw5LB0ILLTRCC43QQguN0H+s6bdJy86KWn7dq9aYzWhLh9AILTQAAAAAAADc9AUd/TG44StjaAAAAABJRU5ErkJggg==" width="120" alt="20픽셀로 축소된 태그"></div>
+            <div class="rung-px">20 px</div>
+            <div class="rung-cell">3.3/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHcAAAB3CAIAAAC2W0jdAAABaklEQVR42u3dwcmDMACA0fpTcIJOUG+dR5fw1g1cpx3EBcRbby6gN0/+AySHCG1AfO8YKrYfIYSI9HIBAAAAAHIq0j9almU4eL/fEy9fliUcnKbpDJX/TDSVVUZllVXmB67pH62qKhwchiHx8vf7HQ42TWMuo7LKqKyyyqisssqorDIqq3wuO87k5nkOB6MnbVHRB6l1Xef5nX3fJ34lc9mKgcoqq4zKR1Fku1N00/Z6vfLcPfoYN30bai5bMVBZZZVRWWWVUVllVFZZZb5mx5nc7XYLB9u2Tbx827bI7YtMh4LRw79xHM1lKwYqq6wyKp9iJ/d4PMJB766ayyqrjMoqo7LKKqOyyqisssrscz3KF42+MJHt1dfn8xkOpr/6ai5bMVRGZZVV5tQ7ueiz3Ww7ua7r7OSsGKisssqorLLKqKwyKqusMt9xmP9djb45Gx38hc/nEw6u62ouWzFURmWVURkAAAAAOI1/MIFG1CBM46MAAAAASUVORK5CYII=" width="119" alt="17픽셀로 축소된 태그"></div>
+            <div class="rung-px">17 px</div>
+            <div class="rung-cell">2.8/셀</div>
+            <div class="rung-bar"><span style="width:98%"></span></div>
+            <div class="rung-rate">98%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAH4AAAB+CAIAAABtQTLfAAABLElEQVR42u3c0QmDMBRAUVNcykF0j0ziHjqIizhIByh5YIgp4jm/wTZcQiCkdRgAAAAAAACgt1T3WM65NDRNU2noOI7S0Lqub0v/sfqklx7ppUd66ZH+8ca6x4Jz0zzPFR/oSIX00iO99EgvPdK/50gV3DcFzvNsexBrPvlghla9DQfppUd66ZFeen6knl8WnJu2bes2jWVZSkP7vlv1Nhyklx7ppUd66ZFeeqSXHumllx7pped+lT/8Cy6Vgquo4A4opWTVI730SC890kuP9NIjvfRILz3SSy890r/G+OjZ9/wHVvM3wFv1NhzpkV56pJce6R2p/qvnewIDjlQ2HKSXHumlR3rpHakuqXuJet1TgZ4v6Gs+eavehiM90kuP9NIjPQAAAAAAAHDdF/6uMcSyZMj/AAAAAElFTkSuQmCC" width="126" alt="14픽셀로 축소된 태그"></div>
+            <div class="rung-px">14 px</div>
+            <div class="rung-cell">2.3/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAIAAAC2BqGFAAAAv0lEQVR42u3bQQ7AIAgAQTH9/5fpH+Qghpl703ZDvBDXAgAAAAAAACaLysOZef7iiFGht1kTWmiEFlpohBYaoYUWGqGFRmihhUZooRG6p2uLu8q+sfTDl3aVJlpooRFaaKElEFpohBZaaIQWGqGFFhqhhUboptwzNNFCI7TQQksgtNAILbTQCC00QgstNEILjdBCz/a9+NEv3lE00Y4OoRFaaKElEFpohBZaaIQWGqGFFhqhhUZoAAAAAAAAgIZ+4eAMoKxLM2AAAAAASUVORK5CYII=" width="120" alt="12픽셀로 축소된 태그"></div>
+            <div class="rung-px">12 px</div>
+            <div class="rung-cell">2.0/셀</div>
+            <div class="rung-bar"><span style="width:97%"></span></div>
+            <div class="rung-rate">97%</div>
+          </div></div>
+        </div>
+      <div class="ladder">
+          <h4>AprilTag 36h11 <span>격자 8×8</span></h4>
+          <div class="rung"><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAA5klEQVR42u3dSw6AIAxAQWq4/5XxBiQsqkBn9n6fstCgrQEAAAAAALeL1QXGGGcfcETq8a6u/3EN/ksAAQRAAAEQQAAEEAABBEAAARCghsjeQPbz9NP3xx1gCBIAAQRAAAEQQAAEEAABBEAAAfhA+vyAas/33QGGIAQQAAEEQAABEEAABBAAAQRAgA11p2DO94IMQQggAAIIgAACIIAACCAAAgiAABfY7n1A9v8JfC8IAQRAAAEQQAAEEEAABBAAAQRAgILCKZgzP8AQhAACIIAACCAAAgiAAAIggAAIAAAAAAAAcIAXtNsevugpNw0AAAAASUVORK5CYII=" width="128" alt="64픽셀로 축소된 태그"></div>
+            <div class="rung-px">64 px</div>
+            <div class="rung-cell">8.0/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAAAsElEQVR42u3aMQqAMAxA0Ua8/5Xj6pihNCW8P4vWRzsEXUuSJEmSdLqoXJSZdy06YsuaK/d57BFAgAABAgQIECABAtQ0i+2a1yqzz23PsoMAAQIECBAgQIAECFDXLDZ1zrKDAAECBAgQIEACBAhQU+/UF/OPoiMGCBAgQAIECBAgQGax+nx0cs6ygwABAgQIECBAAgQIUFMx9cV8F3PEAAECBEiAAAECBEiSJEmSpF8f7MIejqfNaXkAAAAASUVORK5CYII=" width="96" alt="48픽셀로 축소된 태그"></div>
+            <div class="rung-px">48 px</div>
+            <div class="rung-cell">6.0/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAIAAAC2BqGFAAAA20lEQVR42u3cMQ6AIAxAUWq8/5VxZSJhqAH63myM/pAOBG0NAAAAAKC0WLq6937eG0YkveDSnR9r7R9CCy00QgsttARCC43QQguN0EKzLPJunbfleOJjWNFGh9AILbTQEggtNEILLTRCC43Qu0o8TXr9zqcVbXQIjdBCI7TQQiO00AgttNAIfYVXgpGP7o0OhBZaaIQWGqGFFhqhhUZooevZZZs076+nPro3OhBaaIQWWmiEFhqhhRYaoYVmKiQYOU1qdCC00EIjtNAILbTQCC00QgsNAAAAAEAxHzuTHrJ+a+svAAAAAElFTkSuQmCC" width="120" alt="40픽셀로 축소된 태그"></div>
+            <div class="rung-px">40 px</div>
+            <div class="rung-cell">5.0/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIgAAACICAIAAACz2DQFAAAB4UlEQVR42u3d0ZHBUBSAYbujACUoQQeohBZUQCrQApWgAyUoQQf27c55WJN71iYj5vue8hCx8e+9mUlERiMAAAAAAAC69JV9wX6/L8uz2WzQO7/ZbMry9XptXX+9Xpfl1WrVun7cZnyvGt/+N9+TMMKQMc6+IB5XFovFoHd+Mpmk1p9Op73tuxFjKkMYYRBGGIRBGGEQRhh6l74eE69JxHNHz8zn87Jcc37pdruV5ePxOOgPN+7L4XAwYkxlCOMY8892u11Z3m63reufz+eyvFwuO/3bTqdT6vjXNM2v+2XEmMoQBmGEQRhhEAZhhEGYj/DSd5ez3/2N58GeqblP5Zns94nj9ZKavy2ub8SYyhCGVunrMe98DePxeKTWj9d7ao4xRgzCCIMwwiCMMAiDMMIgjDAIgzDC8AdjH0G9Pu/1MWJMZQgjDMIIgzAIIwzCCIMwCCMMwnyMt7seE+/xjM9D60Lc/v1+b13/crmU5ZrrKzXbNGJMZQjjGNOf+NsBXT8HLPscz3iM6fqeTSPGVIYwwiCMMAiDMMIgjDD0rvNnlMVzSjXnl+I243sNkWeUmcoQxjGGWu7BRBhhEEYYhBEGYRBGGIT5aH6vLCH7TLNXnrdmxJjKEAYAAAAAAABa/AAO5XMK8x9cqAAAAABJRU5ErkJggg==" width="136" alt="34픽셀로 축소된 태그"></div>
+            <div class="rung-px">34 px</div>
+            <div class="rung-cell">4.2/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHAAAABwCAIAAABJgmMcAAABKklEQVR42u3cQQqEIABA0Ry6V92sulk3a3ZDiyJlkjTfW7UYgj4qGDZdBwAAANQkxPxoHMfD69Ks63p4fWae59vv+TGm7iWooGXrU9fQaZqqeLCY9S71WayhprygCCqooIIiqKCCImgBQo6bbtt2+ZtlWX7XMe8lY+zvE7NPDyEYoaa8oAgqqKAIKqigCCroK/fyOc425TiH9M/e3wg15QUl1xpawnvGp96xGqGmvKAIKqigCCqooIIiaGH6lh8+x/sBI9SUF1RQBBVUUAQVVFAEfetePsd5qWEYkvbd+336mZhzV0aoKS+oNfTJNfSu/4JKXZd962nKC4qgggqKoIIKiqCCVii0/PDONpnygiKooIIiqKCCIqigFWr6OyVnm0x5QQEAAACa8gWro0rz/z8DDgAAAABJRU5ErkJggg==" width="112" alt="28픽셀로 축소된 태그"></div>
+            <div class="rung-px">28 px</div>
+            <div class="rung-cell">3.5/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAIAAAC2BqGFAAAA20lEQVR42u3cMQ6AIAxAUWq8/5VxZSJhqAH63myM/pAOBG0NAAAAAKC0WLq6937eG0YkveDSnR9r7R9CCy00QgsttARCC43QQguN0EKzLPJunbfleOJjWNFGh9AILbTQEggtNEILLTRCC43Qu0o8TXr9zqcVbXQIjdBCI7TQQiO00AgttNAIfYVXgpGP7o0OhBZaaIQWGqGFFhqhhUZooevZZZs076+nPro3OhBaaIQWWmiEFhqhhRYaoYVmKiQYOU1qdCC00EIjtNAILbTQCC00QgsNAAAAAEAxHzuTHrJ+a+svAAAAAElFTkSuQmCC" width="120" alt="24픽셀로 축소된 태그"></div>
+            <div class="rung-px">24 px</div>
+            <div class="rung-cell">3.0/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAIAAAC2BqGFAAABO0lEQVR42u3cQQqDMBRAwaZ4L72ZejNvZrfWLPyExsQys5Qi+AhpiGlfLwAAAID/kSIfmqbp8kpvtm27vJJblqXSnd/G2j2EFlpohO7XULbqmOf5cY8aWRuUPZdVh6lDaIQWGqGFFhqhhUbobqR6t973/fIz67qerkTecUTk94nsY6SUjGhTB0ILLTRCC43QQguN0E/W+DRpvTOfZerd2Yg2dQiN0EJbdZR9F7d9W9H23Y0RbepAaKGFRmihEVpooRG6Y4MER/V2UYxoU4fQCC200BIILTRCCy00t2i811HvnOo4jqcrkR2JfB8jFznvakSbOoRGaKHpf9Xxq389LVvP+L8OUwdCCy00QguN0EILjdAPlyQ4cprU1IHQQguN0EIjtNBCI/TD+eXsF6dJTR0ILbTQAAAAABDwAYvQSwNB23oiAAAAAElFTkSuQmCC" width="120" alt="20픽셀로 축소된 태그"></div>
+            <div class="rung-px">20 px</div>
+            <div class="rung-cell">2.5/셀</div>
+            <div class="rung-bar"><span style="width:100%"></span></div>
+            <div class="rung-rate">100%</div>
+          </div><div class="rung is-weak">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHcAAAB3CAIAAAC2W0jdAAACOUlEQVR42u2doYoCURSGddlgNBgNI9g1GhT0CTRYbILPYDBZBYPzCNMsPoAmBQ1Wo2AwGAwGo3Hzcv5wZNhRd74v/szueD8Oh8Od8ZrJAAAAAAAAAAAAQJJk/Zdut1sbFovFd1vSYrGw4XA4tGGtVrPhfD634eVysWGj0XB+pC8KLQGwjGUsA5axnD6+/ZfKoS0IgndbUqFQcF6Zy+WSWRG1TMfAMmAZy1iGF09yvV7POQzNZjMbVqtVG04mExuuVqs4S5I3Wq/XNjyfzzZstVo2fDwe1DIdA7CMZSwDlj94ktvv984r7/e788rj8WjDzWYTZ0lyU63ZbDpvFPPu1DIdA8uAZSwDlhPjiffkptOpDeWjzMPh4BzvdrudDU+nkw07nY4N2+22Da/Xq3NklFcul0tqmY4BWMYylgHLH8ETe3LdbteGcgNMPqCMudcln5n2+30bRlFkw9FoRC3TMQDLWAYsYzm9k9z/Q46hcjqUG4phGFLLdAwsA5axDFhmknujSW48HttQfjeCSY6OgWXAMpYBy6me5Or1ug3L5bINK5WK83/KP5c7bfl83oby4eztdqOW6RiAZSxjGbDMJPeLwWDgnLpiTocylK/uyZf8qGU6BmAZy1gGLH/2JCdPIZGPHV97Cokf+eHleSXyPDn/sSzUMh0Dy4BlLGMZ/oJsmhcvhzb/GcKlUolapmNgGbCMZcDyC0n1Nx7kTpsc2uTvrlLLdAwsA5axDFgGAAAAAAAAAACANPED+LqNrSap4UcAAAAASUVORK5CYII=" width="119" alt="17픽셀로 축소된 태그"></div>
+            <div class="rung-px">17 px</div>
+            <div class="rung-cell">2.1/셀</div>
+            <div class="rung-bar"><span style="width:85%"></span></div>
+            <div class="rung-rate">85%</div>
+          </div><div class="rung is-dead">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAH4AAAB+CAIAAABtQTLfAAABx0lEQVR42u3c4W2DQAyGYVp1gIzACGwQskk2ASbICmySZANGSDbICJ3gPqlXlFLxvH+tkOOVZcky56YBAAAAAFTyEWKHw6EU6rpu4y/2er1KoWVZSqG2bStC4YHhGJ+y76+gnnrqQT31oJ56rMZXiIW+6Xq9bvzFbrdbKXQ6nUqh8/lcCg3DUPHAcAxZr+BQD+qpB/XUg/r/T5pShblMaD2Ox2Mp1Pd9KTTPcyn0fD43LjEc/vF4yHoFB9RTTz2opx7U77OlqmMcx1Jo9UFPILRvYcQ2TVPFe8l6BQfUUw/qqQf11O+Vyg//LpdLKXS/3yv6pnAdKRCaozAeCscIv5L1Cg6opx7UUw/qqcePWqqwniLMgEJLVTdvCoRjhP9a/RiyXsEB9dSDeupBPfVaKjTv/WpR1is41IN66kE99aBeS7UW4SPDMCwL1I3YAqE5CpvSZb2CA+qppx7UUw/qtVRvIFzOquuA6jbAh/UUYRQl6xUcUE89qKce1FO/V9Zfol53iSk8MBxjI1iiruCAeupBPfWgnnotFRp3qRQcUE89qKce1FMPLdUvCBOxEAob4MM1K1mv4FAP6qkH9dSDegAAAADAjvkGM7J3NY6Hd2sAAAAASUVORK5CYII=" width="126" alt="14픽셀로 축소된 태그"></div>
+            <div class="rung-px">14 px</div>
+            <div class="rung-cell">1.8/셀</div>
+            <div class="rung-bar"><span style="width:8%"></span></div>
+            <div class="rung-rate">8%</div>
+          </div><div class="rung is-dead">
+            <div class="rung-img"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAIAAAC2BqGFAAABOUlEQVR42u3cQQqDMBBAUVO8l95Mc7PczG7bLgY0Rqu+vw0V+giBwbRdJ0mSJEl6dileHsdx8+pZlVI2r87z3OjJL3vtmECDBi3QoEEjAA1a6+trJsNpmi73heP5reYbmQwdHaAFGrRAgwYt0BcttXv0sizBas45WI3f3cXFn41nv5SSHe3oEGjQoAUatECDNhl+1e42abs7nzW1e7Id7egALdCgQSMADVqgrzoZ/uf7t7PeRtrRjg6BBg1aoEELNOhb1iM4Zua0ox0doAUaNGgEoEELtMnwt3b3VIdh2Dy/xbNffMfVjnZ0gBZo0AINGrRAmwz3nAxr/iO0Zub0DzSODoEGDVqgQQs06AeWEHzmNqmjQ6BBgxZo0AIN+oH5neGK2c9tUkeHQIMGLdCgBRq0JEmSJEk37A38YEsL/5WRkwAAAABJRU5ErkJggg==" width="120" alt="12픽셀로 축소된 태그"></div>
+            <div class="rung-px">12 px</div>
+            <div class="rung-cell">1.5/셀</div>
+            <div class="rung-bar"><span style="width:7%"></span></div>
+            <div class="rung-rate">7%</div>
+          </div></div>
+        </div>
+    </div>
+
+    <div class="note note-warn">
+      <strong>ArUco 4×4는 완만하게 죽고, AprilTag 36h11은 절벽처럼 죽습니다.</strong>
+      36h11은 20px까지 100%였다가 17px에서 85%, 14px에서 8%로 무너집니다. ArUco는 14px에서도 100%입니다.
+      같은 신뢰도를 얻으려면 <strong>36h11이 약 1.4배 큰 픽셀</strong>을 요구합니다.
+      그리고 이건 잡음도 블러도 없는 이상 조건이라, 실물에는 여기에 <strong>2배 정도 여유</strong>를 두어야 합니다.
+    </div>
+
+    <h3>4. 그래서 우리 리그에서는 몇 mm인가</h3>
+    <p>
+      카메라가 보는 태그의 픽셀 수는 단순한 비례식입니다. <code>fx</code>는 intrinsic 캘리브레이션이 알려주는 값이고,
+      현재 sim은 412, 실물 Orbbec은 아직 미측정입니다.
+    </p>
+    <div class="formula">태그 픽셀 = 태그 실제 크기(mm) × fx ÷ 거리(mm)</div>
+
+    <div class="calc" id="calc">
+      <div class="calc-controls">
+        <label for="c-fam">패밀리
+          <select id="c-fam">
+            <option value="aruco">ArUco 4×4_50 — 격자 6×6</option>
+            <option value="apriltag" selected>AprilTag 36h11 — 격자 8×8</option>
+          </select>
+        </label>
+        <label for="c-size">태그 크기 <output id="c-size-v">50 mm</output>
+          <input type="range" id="c-size" min="20" max="80" step="1" value="50">
+        </label>
+        <label for="c-dist">카메라까지 거리 <output id="c-dist-v">0.70 m</output>
+          <input type="range" id="c-dist" min="30" max="120" step="1" value="70">
+        </label>
+        <label for="c-fx">fx <output id="c-fx-v">412 px</output>
+          <input type="range" id="c-fx" min="300" max="700" step="1" value="412">
+        </label>
+      </div>
+      <div class="calc-out">
+        <div class="calc-preview">
+          <img id="c-img" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAA5klEQVR42u3dSw6AIAxAQWq4/5XxBiQsqkBn9n6fstCgrQEAAAAAALeL1QXGGGcfcETq8a6u/3EN/ksAAQRAAAEQQAAEEAABBEAAARCghsjeQPbz9NP3xx1gCBIAAQRAAAEQQAAEEAABBEAAAfhA+vyAas/33QGGIAQQAAEEQAABEEAABBAAAQRAgA11p2DO94IMQQggAAIIgAACIIAACCAAAgiAABfY7n1A9v8JfC8IAQRAAAEQQAAEEEAABBAAAQRAgILCKZgzP8AQhAACIIAACCAAAgiAAAIggAAIAAAAAAAAcIAXtNsevugpNw0AAAAASUVORK5CYII=" alt="계산된 픽셀 크기로 표시한 태그">
+          <span class="calc-cap">카메라가 보게 될 실제 크기</span>
+        </div>
+        <dl class="calc-nums">
+          <div><dt>태그 픽셀</dt><dd id="c-px">—</dd></div>
+          <div><dt>셀당 픽셀</dt><dd id="c-cell">—</dd></div>
+          <div><dt>측정 검출률</dt><dd id="c-rate">—</dd></div>
+        </dl>
+        <p class="calc-verdict" id="c-verdict">—</p>
+      </div>
+    </div>
+
+    <div class="criteria">
+      <h4>결론</h4>
+      <ul>
+        <li><strong>ChArUco 보드는 지금 그대로</strong> — 보드 마커는 흰 사각형 안에 들어가 예산이 더 빡빡한데도 이미 동작합니다</li>
+        <li><strong>AprilTag를 쓰려면 그리퍼 태그만 36h11로, 50 mm 이상.</strong> hand-eye 회전 해의 품질을 직접 좌우하는 쪽에 픽셀을 쓰는 게 낫습니다</li>
+        <li>SO-101 그리퍼에 50 mm는 크니 작은 연장 브래킷으로 바깥에 다세요 — 어차피 서로 다른 각도로 2~3장을 답니다</li>
+        <li><strong>16h5는 피하세요.</strong> 16비트에 ID 30개, 최소 해밍 거리 5라 임의의 사각형이 유효 ID로 읽힐 여지가 구조적으로 큽니다. 다만 공식 문서가 그렇게 말하지는 않고, 제 오검출 테스트는 어떤 패밀리에서도 차이를 잡아내지 못했습니다</li>
+        <li><code>cv2.aruco</code>의 AprilTag 사전은 <strong>오류 정정 0비트</strong>입니다 (ArUco 4×4는 1비트). 본가 apriltag 라이브러리보다 약합니다</li>
+      </ul>
+    </div>
   </section>
 
   <!-- ============ 4. 현장 실행 ============ -->
@@ -1002,6 +1329,72 @@ python -u scripts/verify_alignment.py --camera front --gate \
       } catch (err) {
         /* leave the button alone; the text is selectable either way */
       }
+    }
+
+    // Detection rates measured by rendering each family at each pixel size and
+    // running the real detector over 20 ids x 3 sub-pixel offsets.
+    var LADDER = {"aruco": {"cells": 6, "plain": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAAAmklEQVR42u3aywkAIQxAQSP233KsIYeAn3l3cXfIKTiGJEmSJEmSfiqqBzKzdkHE1UDTjAACBAgQIECAAAkQIECAAAF6q/ZlTXV/VP6B5n2TCQIECBAgQIAAARIgQIAAAQL0WN4HmSBAgAABAgQIkAABAgQIECBAf7VO+6DT3hOZIECAAAECBAgQIAECBAgQIECSJEmSJEnSxW3+gwyAAq9JegAAAABJRU5ErkJggg==", "rows": [{"px": 64, "rate": 100}, {"px": 48, "rate": 100}, {"px": 40, "rate": 100}, {"px": 34, "rate": 100}, {"px": 28, "rate": 100}, {"px": 24, "rate": 100}, {"px": 20, "rate": 100}, {"px": 17, "rate": 98}, {"px": 14, "rate": 100}, {"px": 12, "rate": 97}]}, "apriltag": {"cells": 8, "plain": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAA5klEQVR42u3dSw6AIAxAQWq4/5XxBiQsqkBn9n6fstCgrQEAAAAAALeL1QXGGGcfcETq8a6u/3EN/ksAAQRAAAEQQAAEEAABBEAAARCghsjeQPbz9NP3xx1gCBIAAQRAAAEQQAAEEAABBEAAAfhA+vyAas/33QGGIAQQAAEEQAABEEAABBAAAQRAgA11p2DO94IMQQggAAIIgAACIIAACCAAAgiAABfY7n1A9v8JfC8IAQRAAAEQQAAEEEAABBAAAQRAgILCKZgzP8AQhAACIIAACCAAAgiAAAIggAAIAAAAAAAAcIAXtNsevugpNw0AAAAASUVORK5CYII=", "rows": [{"px": 64, "rate": 100}, {"px": 48, "rate": 100}, {"px": 40, "rate": 100}, {"px": 34, "rate": 100}, {"px": 28, "rate": 100}, {"px": 24, "rate": 100}, {"px": 20, "rate": 100}, {"px": 17, "rate": 85}, {"px": 14, "rate": 8}, {"px": 12, "rate": 7}]}};
+
+    var famSel = document.getElementById("c-fam");
+    if (famSel) {
+      var sizeEl = document.getElementById("c-size"),
+          distEl = document.getElementById("c-dist"),
+          fxEl   = document.getElementById("c-fx"),
+          img    = document.getElementById("c-img");
+
+      function rateAt(fam, px) {
+        var rows = LADDER[fam].rows;
+        if (px >= rows[0].px) return rows[0].rate;
+        if (px <= rows[rows.length - 1].px) return rows[rows.length - 1].rate;
+        for (var i = 0; i < rows.length - 1; i++) {
+          var a = rows[i], b = rows[i + 1];
+          if (px <= a.px && px >= b.px) {
+            var t = (px - b.px) / (a.px - b.px);
+            return Math.round(b.rate + t * (a.rate - b.rate));
+          }
+        }
+        return 0;
+      }
+
+      function update() {
+        var fam = famSel.value,
+            sizeMm = +sizeEl.value,
+            distM = +distEl.value / 100,
+            fx = +fxEl.value,
+            cells = LADDER[fam].cells;
+        var px = sizeMm * fx / (distM * 1000);
+        var perCell = px / cells;
+        var rate = rateAt(fam, px);
+
+        document.getElementById("c-size-v").textContent = sizeMm + " mm";
+        document.getElementById("c-dist-v").textContent = distM.toFixed(2) + " m";
+        document.getElementById("c-fx-v").textContent = fx + " px";
+        document.getElementById("c-px").textContent = px.toFixed(0) + " px";
+        document.getElementById("c-cell").textContent = perCell.toFixed(1);
+        document.getElementById("c-rate").textContent = rate + "%";
+
+        img.src = LADDER[fam].plain;
+        img.width = Math.max(4, Math.round(px));
+
+        var v = document.getElementById("c-verdict");
+        if (rate >= 99 && perCell >= 4) {
+          v.setAttribute("data-level", "ok");
+          v.textContent = "여유 있음. 이상 조건에서 전부 검출되고 셀당 " + perCell.toFixed(1) +
+            "px이라, 실물의 조명·블러·경사각을 감안해도 견딥니다.";
+        } else if (rate >= 99) {
+          v.setAttribute("data-level", "weak");
+          v.textContent = "이상 조건에서는 전부 검출되지만 셀당 " + perCell.toFixed(1) +
+            "px이라 여유가 없습니다. 실물에서 각도가 조금만 비스듬해져도 떨어집니다 — 태그를 키우거나 더 가까이.";
+        } else {
+          v.setAttribute("data-level", "bad");
+          v.textContent = "이상 조건에서조차 " + rate + "%만 검출됩니다. 실물에서는 사실상 안 잡힙니다.";
+        }
+      }
+      [famSel, sizeEl, distEl, fxEl].forEach(function (el) {
+        el.addEventListener("input", update);
+        el.addEventListener("change", update);
+      });
+      update();
     }
 
     // Step ticks. Per-viewer convenience only, so a storage failure is fine.
