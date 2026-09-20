@@ -35,15 +35,16 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from so101.charuco import (  # noqa: E402
-    BOARD_COLS,
-    BOARD_ROWS,
-    SQUARE_MM,
     board_object_points,
     charuco_board,
     detect_board,
+    load_board_spec,
     tag_object_points,
 )
 from so101.handeye import (  # noqa: E402
+    board_pose_in_env,
+    camera_pose_from_board,
+    consensus,
     inter_solver_spread,
     pose_matrix,
     rotation_angle_deg,
@@ -51,8 +52,12 @@ from so101.handeye import (  # noqa: E402
 )
 from so101.intrinsics import centered_virtual_matrix  # noqa: E402
 
-BOARD_W = BOARD_COLS * SQUARE_MM / 1000.0
-BOARD_H = BOARD_ROWS * SQUARE_MM / 1000.0
+# Everything here follows the board that was actually generated, rather than a
+# remembered constant.  The two drifting apart is precisely the failure the
+# spec file exists to prevent, and this test is not exempt from it.
+BOARD = load_board_spec()
+BOARD_W = BOARD.width_mm / 1000.0
+BOARD_H = BOARD.height_mm / 1000.0
 SIZE = (640, 480)
 
 K_TRUE = np.array([[598.0, 0.0, 325.0], [0.0, 602.0, 236.0], [0.0, 0.0, 1.0]])
@@ -64,10 +69,10 @@ HANDEYE_POS_TOLERANCE_MM = 2.0
 HANDEYE_ROT_TOLERANCE_DEG = 0.5
 
 
-def board_texture(scale: int = 40) -> np.ndarray:
+def board_texture(texels_per_mm: int = 4) -> np.ndarray:
     board = charuco_board()
     return board.generateImage(
-        (int(BOARD_W * 1000 * scale / 10), int(BOARD_H * 1000 * scale / 10)),
+        (int(BOARD.width_mm * texels_per_mm), int(BOARD.height_mm * texels_per_mm)),
         marginSize=0,
         borderBits=1,
     )
@@ -137,9 +142,16 @@ def check_intrinsics(keep: Path | None) -> bool:
             @ cv2.Rodrigues(np.array([0, angles[1], 0]))[0]
             @ cv2.Rodrigues(np.array([0, 0, angles[2]]))[0]
         )
-        shift = np.array([rng.uniform(-0.09, 0.09), rng.uniform(-0.07, 0.07), 0.0])
+        shift = np.array([
+            rng.uniform(-0.42, 0.42) * BOARD_W,
+            rng.uniform(-0.45, 0.45) * BOARD_H,
+            0.0,
+        ])
+        # Distance scales with the board so it fills a comparable slice of the
+        # frame whatever size board.yaml describes.
+        reach = 2.4 * max(BOARD_W, BOARD_H)
         translation = -rotation @ (centre + shift) + np.array(
-            [0, 0, rng.uniform(0.35, 0.65)]
+            [0, 0, rng.uniform(0.7 * reach, 1.3 * reach)]
         )
         frame = render_board(K_TRUE, D_TRUE, rotation, translation, texture)
         if keep is not None:
@@ -219,7 +231,7 @@ def synth_hand_eye(
     target_poses: list[np.ndarray] = []
     observations: list[tuple[np.ndarray, np.ndarray]] = []
     object_points = (
-        board_object_points(charuco_board(), np.arange(24).reshape(-1, 1))
+        board_object_points(charuco_board(), np.arange(BOARD.corner_count).reshape(-1, 1))
         if eye_in_hand
         else tag_object_points()
     )
@@ -373,6 +385,89 @@ def check_hand_eye() -> bool:
     return passed
 
 
+def check_shared_board() -> bool:
+    """The route that needs nothing attached to the gripper.
+
+    The wrist camera localises a static board; the front camera is then solved
+    from its own view of that same board.  Two transform compositions carry the
+    whole thing, and inverting either produces a confident wrong pose, so both
+    are checked against a known answer and against a deliberately wrong
+    version of themselves.
+    """
+    print("\n" + "=" * 68)
+    print("SELF-TEST 3: shared board (no gripper tag)")
+    print("=" * 68)
+    rng = np.random.default_rng(5)
+
+    env_board = pose_matrix(
+        cv2.Rodrigues(np.array([0.02, -0.01, 0.42]))[0], np.array([0.25, -0.02, 0.031])
+    )
+    gripper_camera = pose_matrix(
+        cv2.Rodrigues(np.array([0.78, -0.12, 0.05]))[0],
+        np.array([-0.005, -0.060, -0.062]),
+    )
+    env_front = pose_matrix(
+        cv2.Rodrigues(np.array([-1.9, 0.35, 0.9]))[0], np.array([0.62, -0.50, 0.42])
+    )
+
+    # What the wrist camera would report at a spread of arm poses.
+    env_grippers, camera_boards = [], []
+    for _ in range(12):
+        gripper = pose_matrix(
+            cv2.Rodrigues(rng.normal(0.0, 0.5, size=3))[0],
+            np.array([0.24, 0.0, 0.20]) + rng.normal(0.0, 0.05, size=3),
+        )
+        env_grippers.append(gripper)
+        camera_boards.append(
+            np.linalg.inv(gripper @ gripper_camera) @ env_board
+        )
+
+    estimates = board_pose_in_env(env_grippers, gripper_camera, camera_boards)
+    board_est, board_scatter, board_spread = consensus(estimates)
+    board_err = float(np.linalg.norm(board_est[:3, 3] - env_board[:3, 3]) * 1000.0)
+    print(f"  board pose recovered      : {board_err:.3f} mm   "
+          f"(scatter {board_scatter:.3f} mm, spread {board_spread:.3f} deg)")
+
+    front_board = np.linalg.inv(env_front) @ env_board
+    front_est = camera_pose_from_board(board_est, front_board)
+    front_err = float(np.linalg.norm(front_est[:3, 3] - env_front[:3, 3]) * 1000.0)
+    front_rot = rotation_angle_deg(front_est, env_front)
+    print(f"  front camera recovered    : {front_err:.3f} mm, {front_rot:.3f} deg")
+
+    # Controls: each composition inverted the wrong way must visibly fail.
+    wrong_board = consensus([
+        gripper @ np.linalg.inv(gripper_camera) @ board
+        for gripper, board in zip(env_grippers, camera_boards)
+    ])[0]
+    wrong_board_err = float(np.linalg.norm(wrong_board[:3, 3] - env_board[:3, 3]) * 1000.0)
+    wrong_front = board_est @ front_board
+    wrong_front_err = float(np.linalg.norm(wrong_front[:3, 3] - env_front[:3, 3]) * 1000.0)
+    print(f"  control, wrist link inverted  : {wrong_board_err:.0f} mm off -- "
+          f"{'detected' if wrong_board_err > 10 else 'NOT DETECTED'}")
+    print(f"  control, board link inverted  : {wrong_front_err:.0f} mm off -- "
+          f"{'detected' if wrong_front_err > 10 else 'NOT DETECTED'}")
+
+    # How the wrist camera's own error propagates into the front result.
+    noisy = []
+    for _ in range(200):
+        bump = pose_matrix(
+            cv2.Rodrigues(rng.normal(0.0, np.radians(0.3), size=3))[0],
+            rng.normal(0.0, 0.002, size=3),
+        )
+        noisy.append(np.linalg.norm(
+            camera_pose_from_board(env_board @ bump, front_board)[:3, 3]
+            - env_front[:3, 3]) * 1000.0)
+    print(f"  with 2 mm / 0.3 deg board error: front lands "
+          f"{np.mean(noisy):.1f} mm off on average, {np.max(noisy):.1f} mm worst")
+
+    passed = (
+        board_err < 1e-6 and front_err < 1e-6
+        and wrong_board_err > 10 and wrong_front_err > 10
+    )
+    print(f"  -> {'PASS' if passed else 'FAIL'}")
+    return passed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Self-test the calibration pipeline.")
     parser.add_argument("--keep-images", type=Path, default=None)
@@ -387,12 +482,14 @@ def main() -> int:
 
     intrinsics_ok = check_intrinsics(keep)
     hand_eye_ok = check_hand_eye()
+    shared_ok = check_shared_board()
 
     print("\n" + "=" * 68)
-    print(f"intrinsics : {'PASS' if intrinsics_ok else 'FAIL'}")
-    print(f"hand-eye   : {'PASS' if hand_eye_ok else 'FAIL'}")
+    print(f"intrinsics   : {'PASS' if intrinsics_ok else 'FAIL'}")
+    print(f"hand-eye     : {'PASS' if hand_eye_ok else 'FAIL'}")
+    print(f"shared board : {'PASS' if shared_ok else 'FAIL'}")
     print("=" * 68)
-    return 0 if (intrinsics_ok and hand_eye_ok) else 1
+    return 0 if (intrinsics_ok and hand_eye_ok and shared_ok) else 1
 
 
 if __name__ == "__main__":

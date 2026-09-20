@@ -166,3 +166,49 @@ def inter_solver_spread(results: list[HandEyeResult]) -> tuple[float, float]:
             worst_mm = max(worst_mm, float(np.linalg.norm(a[:3, 3] - b[:3, 3]) * 1000.0))
             worst_deg = max(worst_deg, rotation_angle_deg(a, b))
     return worst_mm, worst_deg
+
+
+def board_pose_in_env(
+    env_gripper_poses: list[np.ndarray],
+    gripper_camera: np.ndarray,
+    camera_board_poses: list[np.ndarray],
+) -> list[np.ndarray]:
+    """Where a static board sits, as measured through a wrist-mounted camera.
+
+    ``T_env_board = T_env_gripper · T_gripper_camera · T_camera_board``
+
+    One estimate per observation.  They should all agree, because the board
+    does not move; the spread between them is the error bar on everything
+    derived from it.
+    """
+    return [
+        gripper @ gripper_camera @ board
+        for gripper, board in zip(env_gripper_poses, camera_board_poses)
+    ]
+
+
+def camera_pose_from_board(
+    env_board: np.ndarray, camera_board: np.ndarray
+) -> np.ndarray:
+    """A fixed camera's pose, from its view of a board whose pose is known.
+
+    ``T_env_camera = T_env_board · T_camera_board⁻¹``
+
+    This is what removes the gripper-mounted tag: the board is the shared
+    reference, so the camera never has to see anything attached to the robot.
+    """
+    return env_board @ np.linalg.inv(camera_board)
+
+
+def consensus(poses: list[np.ndarray]) -> tuple[np.ndarray, float, float]:
+    """The most central pose, plus how far the others scatter from it.
+
+    Picking a member rather than averaging keeps the result a valid rigid
+    transform without having to average rotations carefully.
+    """
+    positions = np.array([p[:3, 3] for p in poses])
+    scatter_mm = float(np.linalg.norm(positions.std(axis=0)) * 1000.0)
+    central = int(np.argmin(np.linalg.norm(positions - positions.mean(0), axis=1)))
+    best = poses[central]
+    spread_deg = max((rotation_angle_deg(best, p) for p in poses), default=0.0)
+    return best, scatter_mm, spread_deg

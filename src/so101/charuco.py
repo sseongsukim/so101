@@ -11,44 +11,132 @@ gripper tags start at 20, so both targets can be in frame at once.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 import cv2
 import numpy as np
+import yaml
 
-DICTIONARY_NAME = "DICT_4X4_50"
-
-BOARD_COLS = 7
-BOARD_ROWS = 5
-SQUARE_MM = 30.0
-MARKER_MM = 22.0
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BOARD_SPEC_PATH = REPO_ROOT / "calibration" / "board.yaml"
 
 GRIPPER_TAG_MM = 30.0
 GRIPPER_TAG_IDS = (20, 21, 22)
 
 
-def dictionary() -> cv2.aruco.Dictionary:
-    return cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, DICTIONARY_NAME))
+@dataclass(frozen=True)
+class BoardSpec:
+    """The printed board's actual geometry.
+
+    The generator writes this alongside the PDF and every consumer reads it
+    back, so the detector can never be configured for a board different from
+    the one on the table.  That mismatch does not raise -- it returns a
+    confident, wrong pose -- which is why the spec is a file rather than a
+    constant someone remembers to change in two places.
+    """
+
+    cols: int = 7
+    rows: int = 5
+    square_mm: float = 30.0
+    marker_mm: float = 22.0
+    dictionary: str = "DICT_4X4_50"
+
+    @property
+    def width_mm(self) -> float:
+        return self.cols * self.square_mm
+
+    @property
+    def height_mm(self) -> float:
+        return self.rows * self.square_mm
+
+    @property
+    def corner_count(self) -> int:
+        return (self.cols - 1) * (self.rows - 1)
+
+    @property
+    def marker_count(self) -> int:
+        return (self.cols * self.rows) // 2
+
+    def scaled(self, measured_square_mm: float | None) -> BoardSpec:
+        """The same board as actually printed, if the printer missed the scale."""
+        if not measured_square_mm or measured_square_mm == self.square_mm:
+            return self
+        factor = measured_square_mm / self.square_mm
+        return replace(
+            self,
+            square_mm=measured_square_mm,
+            marker_mm=self.marker_mm * factor,
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "cols": self.cols,
+            "rows": self.rows,
+            "square_mm": float(self.square_mm),
+            "marker_mm": float(self.marker_mm),
+            "dictionary": self.dictionary,
+        }
+
+    def save(self, path: str | Path = BOARD_SPEC_PATH) -> Path:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(self.to_dict(), sort_keys=False), encoding="utf-8"
+        )
+        return path
 
 
-def charuco_board(square_mm: float = SQUARE_MM, marker_mm: float = MARKER_MM):
+def load_board_spec(path: str | Path = BOARD_SPEC_PATH) -> BoardSpec:
+    """The board that was actually generated, or the default if none was."""
+    path = Path(path)
+    if not path.is_file():
+        return BoardSpec()
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return BoardSpec(**{k: payload[k] for k in BoardSpec().to_dict() if k in payload})
+
+
+# Module-level names kept for callers that only need the defaults.
+_DEFAULT = BoardSpec()
+DICTIONARY_NAME = _DEFAULT.dictionary
+BOARD_COLS = _DEFAULT.cols
+BOARD_ROWS = _DEFAULT.rows
+SQUARE_MM = _DEFAULT.square_mm
+MARKER_MM = _DEFAULT.marker_mm
+
+
+def dictionary(name: str = DICTIONARY_NAME) -> cv2.aruco.Dictionary:
+    return cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, name))
+
+
+def charuco_board(
+    square_mm: float | None = None,
+    marker_mm: float | None = None,
+    spec: BoardSpec | None = None,
+):
     """The table board, with dimensions in metres.
 
-    ``square_mm`` is overridable because a printer may not honour 100% scale;
-    the on-site instruction is to measure the printed square and pass the real
-    value rather than trust the nominal one.
+    With no arguments this is the board described by ``calibration/board.yaml``
+    -- the one that was printed.  ``square_mm`` overrides the size for the case
+    the on-site instructions call out: the printer missed 100% scale and the
+    measured square is the truth.
     """
+    spec = spec or load_board_spec()
+    if square_mm is not None:
+        spec = spec.scaled(square_mm) if marker_mm is None else replace(
+            spec, square_mm=square_mm, marker_mm=marker_mm
+        )
     return cv2.aruco.CharucoBoard(
-        (BOARD_COLS, BOARD_ROWS),
-        square_mm / 1000.0,
-        marker_mm / 1000.0,
-        dictionary(),
+        (spec.cols, spec.rows),
+        spec.square_mm / 1000.0,
+        spec.marker_mm / 1000.0,
+        dictionary(spec.dictionary),
     )
 
 
-def board_corner_count() -> int:
+def board_corner_count(spec: BoardSpec | None = None) -> int:
     """Number of interior chessboard corners the board can yield."""
-    return (BOARD_COLS - 1) * (BOARD_ROWS - 1)
+    return (spec or load_board_spec()).corner_count
 
 
 @dataclass

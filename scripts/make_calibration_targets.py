@@ -1,21 +1,28 @@
-"""Generate printable calibration targets for the SO-101 camera rig.
+"""Generate the printable calibration board for the SO-101 camera rig.
 
-Two targets are needed, and they have opposite size constraints:
+One board does all of it.  It calibrates both cameras\' intrinsics, it is the
+target for the wrist camera\'s eye-in-hand solve, and -- because it sits still
+on the table -- it is also the shared reference that gives the front camera its
+pose without anything being attached to the gripper.
 
-* a **ChArUco board** that sits on the table -- used for intrinsic calibration
-  of both cameras and for the wrist camera's eye-in-hand solve;
-* **single ArUco tags** that mount on the gripper -- used for the front
-  camera's eye-to-hand solve.  Several tags at different angles, because a
-  lone planar tag seen near head-on suffers the planar pose ambiguity and its
-  rotation estimate flips, which would land straight in the hand-eye solution.
+Its size is set by the hardest of those jobs: the front camera views it from
+about 0.7 m, and a ChArUco marker stops decoding once its cells fall to roughly
+two pixels.  That is why the default board is far larger than one would print
+for a close-range calibration, and why this script reports the predicted pixels
+per cell before anything is printed.
 
-Marker ids do not overlap: the 7x5 board consumes ids 0-16, the gripper tags
-start at 20, so both can be in frame at once without confusing the detector.
+The generated geometry is written to ``calibration/board.yaml`` so the detector
+reads back exactly what was printed.  A mismatch there does not raise -- it
+returns a confident, wrong pose.
+
+Gripper tags are only needed for the direct eye-to-hand fallback, so they are
+off by default.
 
 Examples:
 
     python scripts/make_calibration_targets.py
-    python scripts/make_calibration_targets.py --out-dir calibration/targets
+    python scripts/make_calibration_targets.py --square-mm 70 --fx 550
+    python scripts/make_calibration_targets.py --gripper-tags
 """
 
 from __future__ import annotations
@@ -29,13 +36,10 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from so101.charuco import (
-    BOARD_COLS,
-    BOARD_ROWS,
     DICTIONARY_NAME,
     GRIPPER_TAG_IDS,
     GRIPPER_TAG_MM,
-    MARKER_MM,
-    SQUARE_MM,
+    BoardSpec,
     charuco_board,
     dictionary,
 )
@@ -47,7 +51,14 @@ DEFAULT_OUT_DIR = REPO_ROOT / "calibration" / "targets"
 # pixels.  That keeps the printed square exactly 30 mm rather than 30 mm plus
 # a rounding error that would propagate into every measured distance.
 PX_PER_MM = 24
-A4_MM = (210.0, 297.0)
+PAGES_MM = {"a4": (210.0, 297.0), "a3": (297.0, 420.0)}
+
+# Room reserved under the board for the title block and the 100 mm ruler, and
+# above it for the heading.  Kept tight: A3 is only 297 mm tall and the grid
+# has to stay dense enough to pin the principal point.
+FOOTER_MM = 30.0
+TOP_MM = 12.0
+MIN_SIDE_MARGIN_MM = 12.0
 
 
 def _mm(value: float) -> int:
@@ -68,9 +79,38 @@ def _font(size_px: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def _blank_page(landscape: bool) -> Image.Image:
-    width_mm, height_mm = (A4_MM[1], A4_MM[0]) if landscape else A4_MM
+def _page_mm(name: str, landscape: bool) -> tuple[float, float]:
+    short, long = PAGES_MM[name]
+    return (long, short) if landscape else (short, long)
+
+
+def _blank_page(name: str, landscape: bool) -> Image.Image:
+    width_mm, height_mm = _page_mm(name, landscape)
     return Image.new("L", (_mm(width_mm), _mm(height_mm)), color=255)
+
+
+def choose_page(spec: BoardSpec) -> str:
+    """Smallest page the board plus its title block actually fits on."""
+    for name in ("a4", "a3"):
+        width_mm, height_mm = _page_mm(name, landscape=True)
+        fits_w = spec.width_mm + 2 * MIN_SIDE_MARGIN_MM <= width_mm
+        fits_h = spec.height_mm + TOP_MM + FOOTER_MM <= height_mm
+        if fits_w and fits_h:
+            return name
+    raise SystemExit(
+        f"board {spec.width_mm:.0f}x{spec.height_mm:.0f} mm does not fit on A3; "
+        "reduce --square-mm or the grid"
+    )
+
+
+def predict_cell_px(spec: BoardSpec, fx: float, distance_m: float) -> float:
+    """Pixels per marker cell at that distance -- the number that decides it.
+
+    A marker is the data bits plus a one-cell black border on each side, and
+    detection collapses when a cell gets down to about two pixels.
+    """
+    marker_px = spec.marker_mm / 1000.0 * fx / distance_m
+    return marker_px / 6.0
 
 
 def _draw_ruler(draw: ImageDraw.ImageDraw, x_mm: float, y_mm: float) -> None:
@@ -98,25 +138,25 @@ def _paste_array(page: Image.Image, array: np.ndarray, x_mm: float, y_mm: float)
     page.paste(Image.fromarray(array), (_mm(x_mm), _mm(y_mm)))
 
 
-def build_charuco_board() -> tuple[cv2.aruco.CharucoBoard, np.ndarray]:
-    board = charuco_board()
-    size_px = (_mm(BOARD_COLS * SQUARE_MM), _mm(BOARD_ROWS * SQUARE_MM))
+def build_charuco_board(spec: BoardSpec) -> tuple[cv2.aruco.CharucoBoard, np.ndarray]:
+    board = charuco_board(spec=spec)
+    size_px = (_mm(spec.width_mm), _mm(spec.height_mm))
     image = board.generateImage(size_px, marginSize=0, borderBits=1)
     return board, image
 
 
-def render_table_board() -> Image.Image:
-    _, board_image = build_charuco_board()
-    page = _blank_page(landscape=True)
+def render_table_board(spec: BoardSpec, page_name: str) -> Image.Image:
+    _, board_image = build_charuco_board(spec)
+    page = _blank_page(page_name, landscape=True)
     draw = ImageDraw.Draw(page)
 
-    board_w_mm = BOARD_COLS * SQUARE_MM
-    board_h_mm = BOARD_ROWS * SQUARE_MM
-    page_w_mm = A4_MM[1]
+    board_w_mm = spec.width_mm
+    board_h_mm = spec.height_mm
+    page_w_mm, _ = _page_mm(page_name, landscape=True)
     x_mm = (page_w_mm - board_w_mm) / 2.0
     # Keep the whole layout clear of the ~5 mm non-printable edge most printers
     # have; the ruler is useless if it lands in that band and gets clipped.
-    y_mm = 17.0
+    y_mm = TOP_MM
     _paste_array(page, board_image, x_mm, y_mm)
 
     # Corner crop marks make it obvious if the printer clipped an edge.
@@ -132,28 +172,28 @@ def render_table_board() -> Image.Image:
 
     title = _font(_mm(4.5))
     body = _font(_mm(3.2))
-    draw.text((_mm(x_mm), _mm(8.0)), "SO-101 table calibration board", fill=0, font=title)
+    draw.text((_mm(x_mm), _mm(4.0)), "SO-101 table calibration board", fill=0, font=title)
     lines = [
-        f"{DICTIONARY_NAME} | ChArUco {BOARD_COLS}x{BOARD_ROWS} | "
-        f"square {SQUARE_MM:.0f} mm | marker {MARKER_MM:.0f} mm | "
-        f"ids 0-{(BOARD_COLS * BOARD_ROWS) // 2 - 1} | {date.today().isoformat()}",
+        f"{spec.dictionary} | ChArUco {spec.cols}x{spec.rows} | "
+        f"square {spec.square_mm:.0f} mm | marker {spec.marker_mm:.0f} mm | "
+        f"ids 0-{spec.marker_count - 1} | {date.today().isoformat()}",
         "Print at 100% scale (turn OFF 'fit to page'). Matte paper only - gloss reflects and detection fails.",
         "Mount flat on a rigid board with no bubbles; a warped board breaks the planar assumption.",
     ]
     for index, line in enumerate(lines):
         draw.text(
-            (_mm(x_mm), _mm(y_mm + board_h_mm + 8.0 + index * 5.0)),
+            (_mm(x_mm), _mm(y_mm + board_h_mm + 6.0 + index * 4.6)),
             line,
             fill=0,
             font=body,
         )
-    _draw_ruler(draw, x_mm, y_mm + board_h_mm + 26.0)
+    _draw_ruler(draw, x_mm, y_mm + board_h_mm + 22.0)
     return page
 
 
 def render_gripper_tags() -> Image.Image:
     tag_dictionary = dictionary()
-    page = _blank_page(landscape=False)
+    page = _blank_page("a4", landscape=False)
     draw = ImageDraw.Draw(page)
 
     title = _font(_mm(4.5))
@@ -205,24 +245,51 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate printable ChArUco/ArUco calibration targets."
     )
+    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument("--cols", type=int, default=7)
+    parser.add_argument("--rows", type=int, default=5)
     parser.add_argument(
-        "--out-dir",
-        type=Path,
-        default=DEFAULT_OUT_DIR,
-        help=f"output directory (default: {DEFAULT_OUT_DIR})",
+        "--square-mm",
+        type=float,
+        default=50.0,
+        help="chessboard square size; the front camera sees the board from about "
+        "0.7 m, so this is what decides whether it can read it at all",
     )
     parser.add_argument(
-        "--png",
-        action="store_true",
-        help="also write PNG copies alongside the PDFs",
+        "--marker-ratio",
+        type=float,
+        default=22.0 / 30.0,
+        help="marker size as a fraction of the square",
     )
+    parser.add_argument("--page", choices=["auto", "a4", "a3"], default="auto")
+    parser.add_argument(
+        "--fx",
+        type=float,
+        default=412.0,
+        help="focal length in pixels used for the readability estimate; replace "
+        "with the measured value once intrinsics are done",
+    )
+    parser.add_argument("--distance", type=float, default=0.73,
+                        help="metres from the front camera to the board")
+    parser.add_argument("--gripper-tags", action="store_true",
+                        help="also emit the gripper tag sheet (only needed for the "
+                             "direct eye-to-hand fallback)")
+    parser.add_argument("--png", action="store_true")
     args = parser.parse_args()
 
+    spec = BoardSpec(
+        cols=args.cols,
+        rows=args.rows,
+        square_mm=args.square_mm,
+        marker_mm=round(args.square_mm * args.marker_ratio, 2),
+    )
+    page_name = choose_page(spec) if args.page == "auto" else args.page
+
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    pages = {
-        "table_charuco": render_table_board(),
-        "gripper_aruco": render_gripper_tags(),
-    }
+    pages = {"table_charuco": render_table_board(spec, page_name)}
+    if args.gripper_tags:
+        pages["gripper_aruco"] = render_gripper_tags()
+
     for name, page in pages.items():
         pdf_path = args.out_dir / f"{name}.pdf"
         page.save(pdf_path, "PDF", resolution=_dpi())
@@ -232,13 +299,29 @@ def main() -> None:
             page.save(png_path, "PNG", dpi=(_dpi(), _dpi()))
             print(f"wrote {png_path}")
 
+    # Record what was actually generated so the detector cannot be configured
+    # for a different board than the one on the table.
+    spec_path = spec.save()
+    print(f"wrote {spec_path}")
+
+    cell_px = predict_cell_px(spec, args.fx, args.distance)
     print(
-        f"\nSpecs: {DICTIONARY_NAME}, ChArUco {BOARD_COLS}x{BOARD_ROWS} "
-        f"(square {SQUARE_MM:.0f} mm, marker {MARKER_MM:.0f} mm, ids 0-"
-        f"{(BOARD_COLS * BOARD_ROWS) // 2 - 1}); gripper tags "
-        f"{GRIPPER_TAG_MM:.0f} mm ids {list(GRIPPER_TAG_IDS)}."
+        f"\nBoard: ChArUco {spec.cols}x{spec.rows}, square {spec.square_mm:.0f} mm, "
+        f"marker {spec.marker_mm:.1f} mm -> {spec.width_mm:.0f}x{spec.height_mm:.0f} mm "
+        f"on {page_name.upper()} landscape"
     )
-    print("Verify the 100 mm bar on each printout before using the targets.")
+    print(f"       {spec.corner_count} corners, {spec.marker_count} markers (ids 0-{spec.marker_count - 1})")
+    print(
+        f"\nReadability at fx={args.fx:.0f}, {args.distance:.2f} m: "
+        f"{cell_px:.1f} px per marker cell"
+    )
+    if cell_px < 3.0:
+        print("       TOO SMALL -- detection collapses near 2 px per cell.")
+    elif cell_px < 4.0:
+        print("       MARGINAL -- fine head-on, fragile once the board is tilted away.")
+    else:
+        print("       OK.")
+    print("\nPrint at 100% scale and measure the 100 mm bar before using the board.")
 
 
 if __name__ == "__main__":
