@@ -28,16 +28,20 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from so101.charuco import (
+    BOARD_COLS,
+    BOARD_ROWS,
+    DICTIONARY_NAME,
+    GRIPPER_TAG_IDS,
+    GRIPPER_TAG_MM,
+    MARKER_MM,
+    SQUARE_MM,
+    charuco_board,
+    dictionary,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT_DIR = REPO_ROOT / "calibration" / "targets"
-
-DICTIONARY_NAME = "DICT_4X4_50"
-BOARD_COLS = 7
-BOARD_ROWS = 5
-SQUARE_MM = 30.0
-MARKER_MM = 22.0
-GRIPPER_TAG_MM = 30.0
-GRIPPER_TAG_IDS = (20, 21, 22)
 
 # 24 px/mm == 609.6 dpi, chosen so every millimetre is a whole number of
 # pixels.  That keeps the printed square exactly 30 mm rather than 30 mm plus
@@ -95,13 +99,7 @@ def _paste_array(page: Image.Image, array: np.ndarray, x_mm: float, y_mm: float)
 
 
 def build_charuco_board() -> tuple[cv2.aruco.CharucoBoard, np.ndarray]:
-    dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, DICTIONARY_NAME))
-    board = cv2.aruco.CharucoBoard(
-        (BOARD_COLS, BOARD_ROWS),
-        SQUARE_MM / 1000.0,
-        MARKER_MM / 1000.0,
-        dictionary,
-    )
+    board = charuco_board()
     size_px = (_mm(BOARD_COLS * SQUARE_MM), _mm(BOARD_ROWS * SQUARE_MM))
     image = board.generateImage(size_px, marginSize=0, borderBits=1)
     return board, image
@@ -154,7 +152,7 @@ def render_table_board() -> Image.Image:
 
 
 def render_gripper_tags() -> Image.Image:
-    dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, DICTIONARY_NAME))
+    tag_dictionary = dictionary()
     page = _blank_page(landscape=False)
     draw = ImageDraw.Draw(page)
 
@@ -176,7 +174,9 @@ def render_gripper_tags() -> Image.Image:
     tag_px = _mm(GRIPPER_TAG_MM)
     y_mm = 62.0
     for tag_id in GRIPPER_TAG_IDS:
-        marker = cv2.aruco.generateImageMarker(dictionary, tag_id, tag_px, borderBits=1)
+        marker = cv2.aruco.generateImageMarker(
+            tag_dictionary, tag_id, tag_px, borderBits=1
+        )
         # A quiet zone is mandatory: without white margin the detector cannot
         # find the tag border.
         _paste_array(page, marker, 30.0, y_mm)

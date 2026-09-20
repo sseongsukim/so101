@@ -113,6 +113,35 @@ def _v4l2_get(device: str, control: str) -> int | None:
         return None
 
 
+def _v4l2_range(device: str, control: str) -> tuple[int, int] | None:
+    """The ``min``/``max`` a control accepts, parsed from ``--list-ctrls``."""
+    if not _v4l2_available():
+        return None
+    try:
+        out = subprocess.run(
+            ["v4l2-ctl", "-d", device, "--list-ctrls"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(control):
+            continue
+        low = high = None
+        for token in stripped.split():
+            if token.startswith("min="):
+                low = int(token[4:])
+            elif token.startswith("max="):
+                high = int(token[4:])
+        if low is not None and high is not None:
+            return (low, high)
+    return None
+
+
 def _v4l2_set(device: str, control: str, value: int) -> bool:
     if not _v4l2_available():
         return False
@@ -171,6 +200,9 @@ class Camera:
         exposure: int | None = None,
         white_balance: int | None = None,
         settle_frames: int = 30,
+        target_brightness: float = 110.0,
+        brightness_tolerance: float = 10.0,
+        metering_fraction: float = 0.5,
     ) -> None:
         self.spec = spec
         self.calibration = calibration
@@ -179,6 +211,9 @@ class Camera:
         self._exposure = exposure
         self._white_balance = white_balance
         self._settle_frames = settle_frames
+        self._target_brightness = target_brightness
+        self._brightness_tolerance = brightness_tolerance
+        self._metering_fraction = metering_fraction
         self._capture: cv2.VideoCapture | None = None
         self._maps: tuple[np.ndarray, np.ndarray] | None = None
         self.exposure_lock = ExposureLock()
@@ -240,17 +275,20 @@ class Camera:
         lock = ExposureLock()
 
         if "auto_exposure" in controls:
-            exposure = self._exposure
-            if exposure is None:
-                # Let the driver's own metering settle, then freeze whatever it
-                # chose, so the locked value suits the actual lighting.
-                self._drain(self._settle_frames)
-                exposure = _v4l2_get(device, "exposure_time_absolute")
             _v4l2_set(device, "auto_exposure", AUTO_EXPOSURE_MANUAL)
+            lock.applied["auto_exposure"] = AUTO_EXPOSURE_MANUAL
+            exposure = self._exposure
+            if exposure is None and "exposure_time_absolute" in controls:
+                # Reading exposure_time_absolute while auto exposure is running
+                # returns the driver's default, not what the metering chose --
+                # the control is flagged inactive.  Locking that value produces
+                # an image unrelated to the actual lighting, which on this rig
+                # blew the wrist camera out to pure white and would have made
+                # board detection fail on site.  Meter it here instead.
+                exposure = self._search_exposure(device)
             if exposure is not None and "exposure_time_absolute" in controls:
                 if _v4l2_set(device, "exposure_time_absolute", int(exposure)):
                     lock.applied["exposure_time_absolute"] = int(exposure)
-            lock.applied["auto_exposure"] = AUTO_EXPOSURE_MANUAL
         else:
             lock.unsupported.append("auto_exposure")
 
@@ -263,7 +301,10 @@ class Camera:
         if "white_balance_automatic" in controls:
             white_balance = self._white_balance
             if white_balance is None:
-                self._drain(5)
+                # Let automatic white balance settle and read what it chose.
+                # Unlike exposure this control reports a live value, so the
+                # read is meaningful.
+                self._drain(self._settle_frames)
                 white_balance = _v4l2_get(device, "white_balance_temperature")
             _v4l2_set(device, "white_balance_automatic", 0)
             if white_balance is not None and "white_balance_temperature" in controls:
@@ -279,6 +320,68 @@ class Camera:
             )
 
         self.exposure_lock = lock
+
+    def _mean_brightness(self, settle: int = 4) -> float:
+        """Mean brightness of the central region.
+
+        Metering the whole frame lets bright background -- lab windows and
+        ceiling in the front camera's case -- pull the exposure down until the
+        tabletop, which is the only part that has to be readable, is too dark.
+        The centre is where the board and the cubes are.
+        """
+        for _ in range(settle):
+            self._capture.read()  # type: ignore[union-attr]
+        ok, frame = self._capture.read()  # type: ignore[union-attr]
+        if not ok or frame is None:
+            return float("nan")
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+        height, width = gray.shape[:2]
+        margin = (1.0 - self._metering_fraction) / 2.0
+        y0, y1 = int(height * margin), int(height * (1.0 - margin))
+        x0, x1 = int(width * margin), int(width * (1.0 - margin))
+        return float(gray[y0:y1, x0:x1].mean())
+
+    def _search_exposure(self, device: str) -> int | None:
+        """Pick a manual exposure that lands near ``self._target_brightness``.
+
+        Brightness rises monotonically with exposure time, so a bisection is
+        enough.  Doing the metering ourselves means the chosen value is
+        reproducible and gets recorded, instead of depending on a driver's
+        hidden auto-exposure state.
+        """
+        bounds = _v4l2_range(device, "exposure_time_absolute")
+        if bounds is None:
+            return None
+        low, high = bounds
+        low = max(low, 1)
+        best: int | None = None
+        best_error = float("inf")
+        for _ in range(10):
+            if high - low <= 1:
+                break
+            mid = (low + high) // 2
+            if not _v4l2_set(device, "exposure_time_absolute", mid):
+                return None
+            brightness = self._mean_brightness()
+            if not np.isfinite(brightness):
+                return None
+            error = abs(brightness - self._target_brightness)
+            if error < best_error:
+                best_error, best = error, mid
+            if error <= self._brightness_tolerance:
+                return mid
+            if brightness < self._target_brightness:
+                low = mid
+            else:
+                high = mid
+        if best is not None:
+            logger.info(
+                "%s: metered exposure %d (mean brightness off target by %.1f)",
+                device,
+                best,
+                best_error,
+            )
+        return best
 
     def _prepare_rectification(self) -> None:
         if not self._want_rectify:
