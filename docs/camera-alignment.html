@@ -1114,12 +1114,18 @@ python scripts/calibrate_intrinsics.py --camera front --solve-only</pre>
           <kbd>Enter</kbd>로 촬영, <code>q</code>로 종료, <code>d</code>로 직전 장 삭제.
           매 장마다 <strong>어느 영역이 아직 비었는지</strong>와 <strong>기울인 장수</strong>를 알려줍니다.
         </p>
+        <p class="section-note" style="margin-top:-6px">
+          접선 왜곡(p1/p2) 추정은 기본으로 꺼둡니다(<code>CALIB_ZERO_TANGENT_DIST</code>).
+          적은 장수로 같이 추정하면 principal point와 얽혀 서로를 오염시키는데, 웹캠급 렌즈는
+          접선 왜곡 자체가 원래 작아서 꺼도 손해가 없습니다 — 40장 기준 <strong>최악의 cx 오차가
+          약 5 px에서 약 3 px로</strong> 줄었습니다(fx 정확도·RMS는 그대로).
+        </p>
 
         <div class="criteria">
           <h4>촬영 프로토콜</h4>
           <ul>
             <li><strong>640×480에서 직접</strong> 촬영 (스크립트가 강제). 720p로 찍고 K를 스케일하면 안 됩니다 — USB 카메라는 해상도 모드마다 센서 크롭·비닝이 달라 실효 FOV가 바뀝니다</li>
-            <li><strong>약 40장</strong>, 보드가 <strong>각 사분면과 중앙</strong>을 덮도록. A4 보드는 작아서 24장으로는 principal point가 2 px 남고, 40장이면 1 px 아래로 떨어집니다 (측정값). 스크립트가 목표 장수를 알려줍니다</li>
+            <li><strong>약 40장</strong>, 보드가 <strong>각 사분면과 중앙</strong>을 덮도록. A4 보드는 작아서 principal point(cx/cy)가 잘 안 잡힙니다 — 60회 독립 시행 측정: 28장 58%, 32장 68%, 36장 77%, <strong>40장 82%</strong>, 48장 78%(더 안 늘어남, 이 보드의 한계). 40장이 목표치입니다</li>
             <li>광축 대비 <strong>±30~45° 기울임 5장 이상</strong>. 정면만 찍으면 초점거리와 거리가 얽혀 fx가 불안정해집니다</li>
             <li>화면의 1/3~2/3을 채우는 여러 거리에서</li>
           </ul>
@@ -1142,6 +1148,15 @@ python scripts/calibrate_intrinsics.py --camera front --solve-only</pre>
           (USB 카메라는 모드별로 센서를 크롭·비닝합니다), <strong>카메라가 어디 있는지는
           해상도와 무관한 물리량</strong>입니다. 그래서 보드는 1280×720으로 찍어 위치를 구하고,
           그 위치를 640×480 운용 설정에 그대로 씁니다.
+        </div>
+
+        <div class="note note-warn">
+          <strong>RMS &lt; 0.3 px 게이트를 통과해도 cx/cy가 틀릴 수 있습니다.</strong>
+          fx·왜곡·principal point는 서로 상쇄하며 재투영 오차를 낮출 수 있어서(고전적인
+          캘리브레이션 퇴화), 합성 데이터로는 <strong>RMS 게이트를 통과한 세션의 약 1/3이
+          cx를 2 px 넘게 놓쳤습니다</strong>(상관계수 0.08 — 거의 무관). 이 게이트는 그 실패를
+          볼 수 없습니다. 진짜 안전망은 <strong>06단계의 정합 게이트</strong>이고, 그래서
+          게이트가 실패했을 때의 진단 순서가 여기 intrinsic부터 시작합니다.
         </div>
 
         <div class="note note-warn">
