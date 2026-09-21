@@ -39,8 +39,18 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import date
 from pathlib import Path
+
+# so101 is also installed editable from a sibling checkout
+# (research/so101), which the .pth file on sys.path puts ahead of this repo.
+# That sibling tree has no charuco.py, so importing so101 unqualified would
+# fail loudly here -- but the same confusion against a tree that DOES define
+# a same-named module is exactly what silently ran stale code earlier in this
+# project (see audit_camera_frames.py). Putting this repo's src first avoids
+# both failure modes.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import cv2
 import numpy as np
@@ -183,7 +193,9 @@ def render_table_board(spec: BoardSpec, page_name: str) -> Image.Image:
 
     title = _font(_mm(4.5))
     body = _font(_mm(3.2))
-    draw.text((_mm(x_mm), _mm(6.0)), "SO-101 table calibration board", fill=0, font=title)
+    # Start clear of the top-left crop mark's +-5 mm reach so the title text
+    # doesn't sit on top of it.
+    draw.text((_mm(x_mm + 14.0), _mm(6.0)), "SO-101 table calibration board", fill=0, font=title)
     lines = [
         f"{spec.dictionary} | ChArUco {spec.cols}x{spec.rows} | "
         f"square {spec.square_mm:.0f} mm | marker {spec.marker_mm:.0f} mm | "
