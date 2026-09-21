@@ -974,29 +974,28 @@
     </div>
 
     <div class="criteria">
-      <h4>결론 — 그리퍼에는 아무것도 붙이지 않습니다</h4>
+      <h4>결론 — 그리퍼에 태그를 붙입니다 (테이프로 충분)</h4>
       <ul>
-        <li>위 픽셀 예산은 <strong>그리퍼에 태그를 다는 경우</strong>의 이야기입니다. 그런데 그 제약 자체를 없앨 수 있습니다 — <strong>테이블 보드를 두 카메라의 공유 기준</strong>으로 쓰면 됩니다</li>
-        <li>손목캠이 보드가 어디 있는지 알려주고, front도 같은 보드를 봅니다. 보드는 움직이지 않으므로 <strong>두 카메라가 동시에 볼 필요도 없습니다</strong></li>
-        <li>핵심 이점: <strong>테이블은 큰 보드를 올릴 수 있지만 그리퍼는 못 듭니다.</strong> "그리퍼에 50 mm를 어떻게 다나"라는 어려운 제약이 "더 큰 종이에 인쇄한다"로 바뀝니다</li>
-        <li>sim에서 확인: 손목 포즈 <strong>24/24 전부</strong>에서 두 카메라가 기하학적으로 보드를 함께 봅니다</li>
-        <li><strong>A4까지만 출력되는 환경</strong>이라 보드는 8×5 · 사각 32 mm · 256×160 mm입니다. 이 크기로는 640×480에서 front가 못 읽지만(2.2 px/셀), <strong>보드 촬영만 1280×720으로</strong> 하면 4.4 px/셀이 됩니다 — 카메라 위치는 해상도와 무관한 물리량이므로 그대로 운용 설정에 씁니다</li>
-        <li>그리퍼 태그는 <strong>대비책으로만</strong> 남깁니다 — 생성기에서 <code>--gripper-tags</code>를 줘야 나옵니다</li>
+        <li><strong>front 카메라는 그리퍼에 테이프로 붙인 태그를 직접 봅니다</strong> (eye-to-hand). 두 카메라가 각자 독립적으로 풀리고, front가 wrist의 캘리브레이션 결과에 기대는 일이 없습니다</li>
+        <li>한때 "그리퍼에 아무것도 안 붙인다"는 이유로 테이블 보드를 두 카메라의 공유 기준으로 쓰는 경로(아래 §5)를 대신 채택했었습니다. 하지만 붙이는 게 <strong>테이프 한 조각</strong>이면 그 제약을 지킬 이유가 없고, 공유 경로는 오차가 wrist 결과 위에 쌓이는 대가가 있습니다(§5) — 그래서 되돌렸습니다</li>
+        <li>이 페이지 위쪽 픽셀 예산(30 mm 태그, DICT_4X4_50)은 정확히 이 용도로 계산된 것입니다. 그리퍼 태그는 이제 <strong>기본으로 인쇄</strong>됩니다</li>
+        <li>테이블 보드는 여전히 필요합니다 — <strong>양쪽 카메라의 intrinsic</strong>과 <strong>wrist의 hand-eye</strong>(테이블에 고정, eye-in-hand)에 씁니다. 이 용도엔 "0.73 m 밖에서 front가 읽어야 한다"는 제약이 없으므로, 보드 크기는 순수하게 intrinsic 정확도만 보고 정하면 됩니다</li>
       </ul>
     </div>
 
-    <h3>5. 대신 치르는 대가 — 오차가 사슬로 엮입니다</h3>
+    <h3>5. 대안 — 공유 보드 경로 (그리퍼에 정말 못 붙일 때)</h3>
     <p>
-      직접 eye-to-hand는 한 번에 풀지만, 공유 보드 경로는 <strong>손목캠 결과 위에 올라탑니다.</strong>
-      front의 오차 = 손목캠 hand-eye 오차 + PnP 2회. 합성 데이터로 실측한 전파량입니다:
+      손목캠이 먼저 테이블 보드의 위치를 재고, front가 같은 보드를 보고 자기 위치를 푸는 방식입니다.
+      그리퍼에 아무것도 안 붙여도 되지만, <strong>오차가 wrist 결과 위에 쌓입니다</strong> —
+      직접 eye-to-hand는 한 번에 풀리는데 이 경로는 wrist hand-eye 오차 + PnP 2회가 더해집니다.
+      합성 데이터로 실측한 전파량:
     </p>
     <div class="formula">보드 pose에 2 mm / 0.3° 오차 → front 카메라는 평균 5.8 mm, 최악 14.1 mm 어긋남</div>
-    <div class="note note-warn">
-      <strong>그래서 손목캠을 먼저, 잘 해야 합니다.</strong> 손목캠의 솔버 간 편차가 크게 나오면
-      front는 그보다 더 나빠집니다. 다행히 순서상 손목캠이 먼저이니, 그 결과를 보고
-      계속할지 그리퍼 태그로 갈아탈지 판단하면 됩니다. 판정은 어느 쪽이든
-      <strong>같은 게이트(RMSE &lt; 3 px)</strong>가 합니다.
-    </div>
+    <p>
+      <code>scripts/calibrate_handeye.py --camera front --solve --via-board</code>로 남아있습니다.
+      쓰게 된다면 <strong>wrist를 먼저, 잘 해야 합니다</strong> — 솔버 간 편차가 크면 그 오차가 front에
+      그대로, 오히려 증폭돼 전달됩니다.
+    </p>
   </section>
 
   <!-- ============ 4. 현장 실행 ============ -->
@@ -1038,25 +1037,23 @@ pip install -e '.[real]'   <span class="hash"># opencv-python-headless, pyyaml �
           <button class="copy" type="button">copy</button>
           <pre>python scripts/make_calibration_targets.py
 <span class="hash"># → calibration/targets/table_charuco.pdf  (A4 가로, ChArUco 8×5, 사각 32 mm, 256×160 mm)</span>
-<span class="hash"># → calibration/board.yaml                 (검출기가 읽는 규격 — 인쇄물과 자동 일치)</span>
-
-<span class="hash"># intrinsic 측정 후, 실제 fx로 판독성 재확인</span>
-python scripts/make_calibration_targets.py --fx 550 --distance 0.73</pre>
+<span class="hash"># → calibration/targets/gripper_aruco.pdf  (A4 세로, 30 mm 태그 3장, 기본 포함)</span>
+<span class="hash"># → calibration/board.yaml                 (검출기가 읽는 규격 — 인쇄물과 자동 일치)</span></pre>
         </div>
 
         <div class="note note-warn">
           <strong>배율 100%로 인쇄.</strong> 프린터 대화상자의 "페이지에 맞춤" / "scale to fit"을
           반드시 끄세요. 켜면 치수가 틀어지고 이후 모든 숫자가 조용히 틀립니다.
-          <strong>무광 용지</strong>만 — 광택지는 조명 반사로 검출이 실패합니다. 이 보드는 <strong>A4 가로</strong> 한 장입니다.
+          <strong>무광 용지</strong>만 — 광택지는 조명 반사로 검출이 실패합니다.
         </div>
 
         <div class="criteria">
           <h4>확인할 것</h4>
           <ul>
-            <li>페이지 하단 <strong>100 mm 기준자</strong>를 자로 측정. 정확히 100 mm가 아니면 재인쇄하거나, 실측 사각 크기를 이후 명령에 <code>--square-mm</code>으로 전달</li>
-            <li>테이블 보드는 평판에 <strong>기포 없이</strong> 부착 — 휘면 평면 가정이 깨집니다</li>
-            <li>그리퍼 태그 2~3장을 <strong>서로 다른 각도</strong>로 작은 큐브/브래킷에 고정. 단일 평면 태그는 정면에서 회전 추정이 튀고, 그 오차가 hand-eye 해에 그대로 들어갑니다</li>
-            <li>보드 ID 0–16, 그리퍼 ID 20–22로 겹치지 않으니 둘이 같이 보여도 무방</li>
+            <li>각 페이지 하단 <strong>100 mm 기준자</strong>를 자로 측정. 정확히 100 mm가 아니면 재인쇄하거나, 실측 사각 크기를 이후 명령에 <code>--square-mm</code>으로 전달</li>
+            <li>테이블 보드는 평판에 <strong>기포 없이</strong> 부착 — 휘면 평면 가정이 깨집니다. wrist intrinsic·hand-eye에 씁니다</li>
+            <li>그리퍼 태그 3장을 <strong>서로 다른 각도</strong>로 작은 큐브/브래킷에 붙이고, 그 브래킷을 <strong>그리퍼에 테이프로</strong> 고정. 영구 마운트일 필요는 없고, 촬영 중 움직이지만 않으면 됩니다. 단일 평면 태그는 정면에서 회전 추정이 튀고, 그 오차가 hand-eye 해에 그대로 들어가서 3장을 씁니다</li>
+            <li>보드 마커 ID 0–19, 그리퍼 태그 ID 20–22로 겹치지 않으니 둘이 같이 보여도 무방</li>
           </ul>
         </div>
       </div>
@@ -1096,13 +1093,8 @@ python scripts/make_calibration_targets.py --fx 550 --distance 0.73</pre>
       <div class="step-body">
         <div class="cmd">
           <button class="copy" type="button">copy</button>
-          <pre><span class="hash"># 운용 해상도 — 정책이 실제로 쓸 값</span>
-python scripts/calibrate_intrinsics.py --camera front
+          <pre>python scripts/calibrate_intrinsics.py --camera front
 python scripts/calibrate_intrinsics.py --camera wrist
-
-<span class="hash"># front 고해상도 — 05단계의 보드 촬영용. 별도 파일로 저장됨</span>
-python scripts/calibrate_intrinsics.py --camera front --width 1280 --height 720
-<span class="hash"># → calibration/cameras/front_1280x720.yaml</span>
 
 <span class="hash"># 인쇄 사각이 32 mm가 아니었다면</span>
 python scripts/calibrate_intrinsics.py --camera front --square-mm 31.7
@@ -1141,13 +1133,6 @@ python scripts/calibrate_intrinsics.py --camera front --solve-only</pre>
           <p style="margin:10px 0 0;color:var(--ink-soft);font-size:13.5px">
             불합격이면 <code>*.rejected.yaml</code>로 떨어지고 정식 파일은 건드리지 않습니다.
           </p>
-        </div>
-
-        <div class="note">
-          <strong>front는 두 번 캘리브레이션합니다.</strong> intrinsic은 해상도마다 다르지만
-          (USB 카메라는 모드별로 센서를 크롭·비닝합니다), <strong>카메라가 어디 있는지는
-          해상도와 무관한 물리량</strong>입니다. 그래서 보드는 1280×720으로 찍어 위치를 구하고,
-          그 위치를 640×480 운용 설정에 그대로 씁니다.
         </div>
 
         <div class="note note-warn">
@@ -1190,12 +1175,14 @@ python scripts/calibrate_handeye.py --camera wrist --capture --replay
 python -u scripts/calibrate_handeye.py --camera wrist --solve</pre>
         </div>
         <div class="criteria">
-          <h4>결과에서 확인할 것 — 다음 단계가 여기에 올라탑니다</h4>
+          <h4>결과에서 확인할 것</h4>
           <ul>
             <li><strong>솔버 간 편차</strong> — 10 mm 초과면 경고가 뜹니다. 솔버가 아니라 <strong>포즈 다양성이나 기구학</strong> 문제이니 재촬영하세요</li>
             <li><strong>rig scatter</strong> — 고정돼 있어야 할 변환의 흩어짐. 크면 보드가 움직였거나 FK가 실물과 다릅니다</li>
-            <li>여기서 2 mm 틀리면 front는 평균 5.8 mm 틀립니다. <strong>여기서 타협하지 마세요</strong></li>
           </ul>
+          <p style="margin:10px 0 0;color:var(--ink-soft);font-size:13.5px">
+            front는 그리퍼 태그로 독립적으로 풉니다(05단계) — 여기 오차가 그쪽으로 전파되지 않습니다.
+          </p>
         </div>
       </div>
     </div>
@@ -1204,41 +1191,41 @@ python -u scripts/calibrate_handeye.py --camera wrist --solve</pre>
     <div class="step" data-step="4b">
       <div class="step-head">
         <span class="step-no">05</span>
-        <h3 class="step-title">front 카메라 — 공유 보드로 <span class="chip chip-site">#14</span></h3>
+        <h3 class="step-title">front 카메라 hand-eye — 그리퍼 태그로 <span class="chip chip-site">#14</span></h3>
         <label class="tick"><input type="checkbox"> 완료</label>
       </div>
       <div class="step-body">
+        <div class="note note-stop">
+          <strong>사람이 입회해야 합니다.</strong> 04와 마찬가지로 로봇이 움직입니다.
+          시뮬레이션은 케이블·클램프·front 카메라 마운트를 모릅니다.
+        </div>
         <p>
-          <strong>로봇을 움직일 필요도, 그리퍼에 뭘 붙일 필요도 없습니다.</strong>
-          04에서 손목캠이 보드의 위치를 알아냈으니, front가 같은 보드를 찍기만 하면 됩니다.
-          보드는 04 이후 <strong>절대 움직이면 안 됩니다.</strong>
+          01에서 그리퍼에 테이프로 고정한 태그를 front 카메라가 여러 자세에서 직접 봅니다.
+          <strong>wrist 캘리브레이션과 독립적으로 풀립니다</strong> — 순서를 04보다 먼저 해도 무방합니다.
         </p>
         <div class="cmd">
           <button class="copy" type="button">copy</button>
-          <pre><span class="hash"># front로 보드를 고해상도로 몇 장 찍고 (로봇은 움직이지 않음)</span>
-python scripts/view_cameras.py --camera front --width 1280 --height 720 \
-    --watch 5 --interval 1.0 --raw
+          <pre><span class="hash"># 수동: 팔을 직접 놓고 Enter</span>
+python scripts/calibrate_handeye.py --camera front --capture
 
-<span class="hash"># 손목캠 결과 + 그 프레임들로 front 위치를 푼다</span>
-<span class="hash"># (프레임 크기를 보고 front_1280x720 intrinsic을 자동 선택)</span>
-python -u scripts/calibrate_handeye.py --camera front --solve --via-board \
-    --front-image outputs/camera_views/front_raw_*.png</pre>
+<span class="hash"># 자동 재생: sim에서 그리퍼 태그 가시성 검증된 24포즈</span>
+python scripts/calibrate_handeye.py --camera front --capture --replay
+
+python -u scripts/calibrate_handeye.py --camera front --solve</pre>
         </div>
-        <div class="formula">T_env_board = T_env_gripper · T_gripper_wristcam · T_wristcam_board
-T_env_front = T_env_board · T_frontcam_board⁻¹</div>
         <div class="criteria">
           <h4>확인할 것</h4>
           <ul>
-            <li><strong>board position scatter</strong> — 손목 프레임들이 말하는 보드 위치가 얼마나 일치하는지. 10 mm 초과면 04를 다시 하세요</li>
-            <li><strong>front frames 간 scatter</strong> — 여러 장에서 나온 front 위치의 흩어짐</li>
-            <li>보드가 04와 05 사이에 움직였다면 이 값들이 조용히 틀립니다. 건드리지 마세요</li>
-            <li>구해진 위치는 <code>front.yaml</code>(640×480 운용 파일)에 기록됩니다 — 고해상도 파일이 아니라</li>
+            <li><strong>솔버 간 편차</strong> — 10 mm 초과면 경고. 포즈 다양성 부족이나 태그가 촬영 중 흔들렸을 가능성</li>
+            <li><strong>rig scatter</strong> — 그리퍼 태그가 실제로 고정돼 있었는지의 물리적 확인. 테이프가 헐거우면 여기서 드러납니다</li>
           </ul>
         </div>
         <div class="note">
-          게이트를 통과하지 못하면 대비책이 있습니다: <code>--gripper-tags</code>로 태그를 뽑아
-          그리퍼에 달고 직접 eye-to-hand로 푸는 것 — <code>--via-board</code> 없이
-          <code>--camera front --capture</code> / <code>--solve</code>입니다.
+          그리퍼 태그로 잘 안 풀리면(태그가 자꾸 가려지거나 조명이 나쁘거나) 대안이 있습니다:
+          <code>scripts/calibrate_handeye.py --camera front --solve --via-board</code> —
+          04에서 얻은 손목캠 결과로 테이블 보드를 통해 front 위치를 대신 구합니다.
+          이 경로는 오차가 wrist 결과 위에 쌓이므로 04를 먼저 잘 끝냈을 때만 씁니다
+          (문서 위쪽 "태그를 어떻게 고르는가" §5 참고).
         </div>
       </div>
     </div>

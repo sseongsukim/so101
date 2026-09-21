@@ -1,28 +1,39 @@
-"""Generate the printable calibration board for the SO-101 camera rig.
+"""Generate the two printable calibration targets for the SO-101 camera rig.
 
-One board does all of it.  It calibrates both cameras\' intrinsics, it is the
-target for the wrist camera\'s eye-in-hand solve, and -- because it sits still
-on the table -- it is also the shared reference that gives the front camera its
-pose without anything being attached to the gripper.
+Two targets, one job each:
 
-Its size is set by the hardest of those jobs: the front camera views it from
-about 0.7 m, and a ChArUco marker stops decoding once its cells fall to roughly
-two pixels.  That is why the default board is far larger than one would print
-for a close-range calibration, and why this script reports the predicted pixels
-per cell before anything is printed.
+* the **table board** -- handheld for both cameras' intrinsic calibration,
+  and left flat on the table for the wrist camera's eye-in-hand hand-eye
+  solve;
+* the **gripper tags** -- taped to the gripper, and read directly by the
+  front camera for its own eye-to-hand hand-eye solve.  Nothing about the
+  front camera's extrinsic depends on the wrist camera's calibration this
+  way: each camera is solved on its own.  (A tag taped on is enough --
+  it does not need to be a permanent mount.)
 
-The generated geometry is written to ``calibration/board.yaml`` so the detector
-reads back exactly what was printed.  A mismatch there does not raise -- it
-returns a confident, wrong pose.
+Both are printed by default.  ``--no-gripper-tags`` skips the second sheet
+for the fallback in ``calibrate_handeye.py --via-board``, which derives the
+front camera's pose from the wrist camera's view of the table board instead
+-- useful if taping a tag to the gripper is genuinely not an option, at the
+cost of inheriting the wrist camera's own calibration error on top of an
+extra PnP solve (measured: a 2 mm error in the table board's recovered pose
+puts the front camera off by 5.8 mm on average, 14.1 mm worst case).
 
-Gripper tags are only needed for the direct eye-to-hand fallback, so they are
-off by default.
+The table board's size is set by intrinsic calibration's own needs (more
+corners at a comfortable handheld distance), not by any long-distance
+viewing requirement -- that requirement only applies to the ``--via-board``
+fallback, which is why ``--fx``/``--distance``/``--capture-width`` below stay
+around purely for that path's benefit.
+
+The generated geometry is written to ``calibration/board.yaml`` so the
+detector reads back exactly what was printed.  A mismatch there does not
+raise -- it returns a confident, wrong pose.
 
 Examples:
 
     python scripts/make_calibration_targets.py
-    python scripts/make_calibration_targets.py --square-mm 70 --fx 550
-    python scripts/make_calibration_targets.py --gripper-tags
+    python scripts/make_calibration_targets.py --square-mm 40
+    python scripts/make_calibration_targets.py --no-gripper-tags
 """
 
 from __future__ import annotations
@@ -279,9 +290,15 @@ def main() -> None:
         "the extrinsic does not depend on resolution, so the board may be shot "
         "at a higher one than the task runs at",
     )
-    parser.add_argument("--gripper-tags", action="store_true",
-                        help="also emit the gripper tag sheet (only needed for the "
-                             "direct eye-to-hand fallback)")
+    parser.add_argument(
+        "--no-gripper-tags",
+        action="store_true",
+        help="skip the gripper tag sheet. Printed by default: the front "
+        "camera's extrinsic is solved directly from a tag taped to the "
+        "gripper (eye-to-hand) -- see calibrate_handeye.py. --via-board there "
+        "is a fallback that needs nothing on the gripper, at the cost of "
+        "depending on the wrist camera's own calibration.",
+    )
     parser.add_argument("--png", action="store_true")
     args = parser.parse_args()
 
@@ -295,7 +312,7 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     pages = {"table_charuco": render_table_board(spec, page_name)}
-    if args.gripper_tags:
+    if not args.no_gripper_tags:
         pages["gripper_aruco"] = render_gripper_tags()
 
     for name, page in pages.items():
@@ -322,27 +339,31 @@ def main() -> None:
     task_cell = predict_cell_px(spec, args.fx, args.distance)
     scale = args.capture_width / 640.0
     shot_cell = task_cell * scale
-    print(f"\nReadability from the front camera at {args.distance:.2f} m:")
+    print(f"\n[--via-board fallback only] readability from the front camera at "
+          f"{args.distance:.2f} m across the table:")
     print(f"  read out at  640 px wide (fx {args.fx:.0f})  : {task_cell:.1f} px/cell -- {verdict(task_cell)}")
     print(f"  read out at {args.capture_width:5d} px wide (fx ~{args.fx * scale:.0f}) : "
           f"{shot_cell:.1f} px/cell -- {verdict(shot_cell)}")
     if task_cell < 4.0 <= shot_cell:
         print(
-            "\n  Too small to read at the task resolution, which is fine: photograph\n"
-            "  the board at the higher one for the extrinsic solve. Where a camera\n"
-            "  sits does not depend on how many pixels it is read out with."
+            "\n  Too small to read at the task resolution, which is fine for --via-board:\n"
+            "  photograph the board at the higher one for that extrinsic solve. This does\n"
+            "  not matter at all for the default path (gripper tags), which never views\n"
+            "  the table board from across the room."
         )
 
     if spec.corner_count < 24:
         print(
             f"\n  Only {spec.corner_count} corners -- few enough that the principal point may stay\n"
-            "  poorly constrained however many images are taken."
+            "  poorly constrained however many images are taken. This affects intrinsic\n"
+            "  calibration for both cameras regardless of which hand-eye route is used."
         )
     elif spec.width_mm < 300:
         print(
             f"\n  {spec.corner_count} corners on a {spec.width_mm:.0f} mm board: plan on about 40 intrinsic\n"
-            "  shots rather than 20. Measured, 24 leaves the principal point about\n"
-            "  2 px out and 40 brings it under 1 px."
+            "  shots rather than 20-25. Measured on this exact board: 24 shots land the\n"
+            "  principal point within 2 px about 70% of the time, 40 shots about 82%\n"
+            "  (this plateaus -- more than 40 does not help further)."
         )
     print("\nPrint at 100% scale and measure the 100 mm bar before using the board.")
 

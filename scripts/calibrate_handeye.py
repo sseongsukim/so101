@@ -27,18 +27,29 @@ eye-in-hand, so the front camera's transforms are inverted before being passed
 in, which turns the same call into a solve for the camera's pose in the
 environment frame.  Getting this backwards produces a plausible, wrong answer.
 
-``--via-board`` is the preferred route for the front camera and needs nothing
-attached to the gripper.  The wrist camera, once calibrated, measures where the
-static table board sits; the front camera is then solved from its own view of
-that same board.  Because the board does not move, the two cameras need not
-even see it at the same moment.  The cost is that the result inherits the wrist
-hand-eye error on top of two PnP solves -- measured at roughly 5.8 mm for a
-2 mm error in the board pose -- so the wrist solve has to be good first.
+The default way to solve the front camera is a tag taped to the gripper
+(``--camera front --capture`` / ``--solve``, no extra flag): each camera is
+then solved independently, from its own images, with no dependency between
+them.  A tag taped on is enough -- it does not need to be a permanent mount.
+
+``--via-board`` is the fallback for when nothing can be attached to the
+gripper.  It needs the wrist camera calibrated first: the wrist camera
+measures where the static table board sits, and the front camera is then
+solved from its own view of that same board.  Because the board does not
+move, the two cameras need not even see it at the same moment.  The cost is
+that the result inherits the wrist hand-eye error on top of two PnP solves --
+measured at roughly 5.8 mm for a 2 mm error in the board pose -- so this route
+is only as good as the wrist solve underneath it.
 
 Examples:
 
     python scripts/calibrate_handeye.py --camera wrist --capture
     python -u scripts/calibrate_handeye.py --camera wrist --solve
+
+    python scripts/calibrate_handeye.py --camera front --capture
+    python -u scripts/calibrate_handeye.py --camera front --solve
+
+    # fallback, no tag on the gripper:
     python -u scripts/calibrate_handeye.py --camera front --solve --via-board \
         --front-image outputs/camera_views/front_raw_000.png
 """
