@@ -3,3 +3,4 @@ rows: 5
 square_mm: 32.0
 marker_mm: 23.47
 dictionary: DICT_4X4_50
+id_offset: 0

@@ -1,0 +1,6 @@
+cols: 4
+rows: 5
+square_mm: 40.91
+marker_mm: 30.0
+dictionary: DICT_4X4_50
+id_offset: 20

@@ -227,6 +227,7 @@ calibration/*
 # back to defaults that do not match the printed sheet, and every measured
 # distance comes out scaled.
 !calibration/board.yaml
+!calibration/gripper_board.yaml
 
 # PyPI configuration file
 .pypirc

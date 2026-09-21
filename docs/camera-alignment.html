@@ -562,7 +562,7 @@
           <tr>
             <td class="num">10</td>
             <td><code>scripts/make_calibration_targets.py</code></td>
-            <td>ChArUco 보드 + 그리퍼 태그 인쇄 PDF</td>
+            <td>테이블 ChArUco 보드 + 그리퍼 ChArUco 보드 인쇄 PDF</td>
             <td><span class="chip chip-done">완료</span></td>
           </tr>
           <tr>
@@ -974,12 +974,14 @@
     </div>
 
     <div class="criteria">
-      <h4>결론 — 그리퍼에 태그를 붙입니다 (테이프로 충분)</h4>
+      <h4>결론 — 그리퍼에 ChArUco 보드를 붙입니다 (테이프로 충분)</h4>
       <ul>
-        <li><strong>front 카메라는 그리퍼에 테이프로 붙인 태그를 직접 봅니다</strong> (eye-to-hand). 두 카메라가 각자 독립적으로 풀리고, front가 wrist의 캘리브레이션 결과에 기대는 일이 없습니다</li>
+        <li><strong>front 카메라는 그리퍼에 테이프로 붙인 ChArUco 보드를 직접 봅니다</strong> (eye-to-hand). 두 카메라가 각자 독립적으로 풀리고, front가 wrist의 캘리브레이션 결과에 기대는 일이 없습니다</li>
         <li>한때 "그리퍼에 아무것도 안 붙인다"는 이유로 테이블 보드를 두 카메라의 공유 기준으로 쓰는 경로(아래 §5)를 대신 채택했었습니다. 하지만 붙이는 게 <strong>테이프 한 조각</strong>이면 그 제약을 지킬 이유가 없고, 공유 경로는 오차가 wrist 결과 위에 쌓이는 대가가 있습니다(§5) — 그래서 되돌렸습니다</li>
-        <li>이 페이지 위쪽 픽셀 예산(30 mm 태그, DICT_4X4_50)은 정확히 이 용도로 계산된 것입니다. 그리퍼 태그는 이제 <strong>기본으로 인쇄</strong>됩니다</li>
+        <li>처음엔 3개의 개별 태그를 각도를 준 큐브에 붙이는 방식으로 설계했지만, legalaspro/so101-ros-physical-ai의 실제 동작 사례(평평한 보드 하나를 그리퍼 한쪽 면에 그대로 부착)를 보고 <strong>단일 평면 ChArUco 보드로 단순화</strong>했습니다. 보드는 코너가 12개라 단일 마커 4코너보다 정면 pose 모호성에 훨씬 강하고, hand-eye 포즈 자체가 이미 넓은 회전 다양성을 갖도록 설계돼 있어서(<code>generate_handeye_poses.py</code>) 굳이 각도를 준 마운트가 없어도 됩니다</li>
+        <li>단, <strong>개별 마커 크기는 30mm를 그대로 유지</strong>했습니다 — 이 페이지 위쪽 픽셀 예산 분석이 근거한 값이라서입니다. 격자를 4×5로 하면서 보드 전체가 164×205mm로 커졌습니다(legalaspro의 60×75mm보다 훨씬 큼 — 그들의 11mm 마커는 저희 조건에서는 너무 작습니다)</li>
         <li>테이블 보드는 여전히 필요합니다 — <strong>양쪽 카메라의 intrinsic</strong>과 <strong>wrist의 hand-eye</strong>(테이블에 고정, eye-in-hand)에 씁니다. 이 용도엔 "0.73 m 밖에서 front가 읽어야 한다"는 제약이 없으므로, 보드 크기는 순수하게 intrinsic 정확도만 보고 정하면 됩니다</li>
+        <li>두 보드는 같은 DICT_4X4_50을 쓰지만 <strong>마커 ID가 분리</strong>됩니다(테이블 0–19, 그리퍼 20–29) — 한쪽 detector가 다른 쪽 보드의 마커를 절대 매칭하지 않도록 딱 그 구간만 담은 서브 딕셔너리를 씁니다(실제로 검증함)</li>
       </ul>
     </div>
 
@@ -1036,9 +1038,10 @@ pip install -e '.[real]'   <span class="hash"># opencv-python-headless, pyyaml �
         <div class="cmd">
           <button class="copy" type="button">copy</button>
           <pre>python scripts/make_calibration_targets.py
-<span class="hash"># → calibration/targets/table_charuco.pdf  (A4 가로, ChArUco 8×5, 사각 32 mm, 256×160 mm)</span>
-<span class="hash"># → calibration/targets/gripper_aruco.pdf  (A4 세로, 30 mm 태그 3장, 기본 포함)</span>
-<span class="hash"># → calibration/board.yaml                 (검출기가 읽는 규격 — 인쇄물과 자동 일치)</span></pre>
+<span class="hash"># → calibration/targets/table_charuco.pdf   (A4 가로, ChArUco 8×5, 사각 32 mm, 256×160 mm)</span>
+<span class="hash"># → calibration/targets/gripper_board.pdf   (A4 세로, ChArUco 4×5, 마커 30 mm, 164×205 mm, 기본 포함)</span>
+<span class="hash"># → calibration/board.yaml                  (테이블 보드 규격 — 인쇄물과 자동 일치)</span>
+<span class="hash"># → calibration/gripper_board.yaml          (그리퍼 보드 규격 — 인쇄물과 자동 일치)</span></pre>
         </div>
 
         <div class="note note-warn">
@@ -1052,8 +1055,8 @@ pip install -e '.[real]'   <span class="hash"># opencv-python-headless, pyyaml �
           <ul>
             <li>각 페이지 하단 <strong>100 mm 기준자</strong>를 자로 측정. 정확히 100 mm가 아니면 재인쇄하거나, 실측 사각 크기를 이후 명령에 <code>--square-mm</code>으로 전달</li>
             <li>테이블 보드는 평판에 <strong>기포 없이</strong> 부착 — 휘면 평면 가정이 깨집니다. wrist intrinsic·hand-eye에 씁니다</li>
-            <li>그리퍼 태그 3장을 <strong>서로 다른 각도</strong>로 작은 큐브/브래킷에 붙이고, 그 브래킷을 <strong>그리퍼에 테이프로</strong> 고정. 영구 마운트일 필요는 없고, 촬영 중 움직이지만 않으면 됩니다. 단일 평면 태그는 정면에서 회전 추정이 튀고, 그 오차가 hand-eye 해에 그대로 들어가서 3장을 씁니다</li>
-            <li>보드 마커 ID 0–19, 그리퍼 태그 ID 20–22로 겹치지 않으니 둘이 같이 보여도 무방</li>
+            <li>그리퍼 보드는 <strong>평평하게, 그리퍼 한쪽 면에 그대로 테이프로</strong> 부착. 각도를 준 마운트나 큐브는 필요 없습니다 — 보드 자체의 코너 개수(12개)와 hand-eye 포즈의 회전 다양성이 정면 pose 모호성을 이미 충분히 막아줍니다. 영구 마운트일 필요 없이, 촬영 중 움직이지만 않으면 됩니다</li>
+            <li>보드 마커 ID: 테이블 0–19, 그리퍼 20–29로 겹치지 않으니 둘이 같이 보여도 무방</li>
           </ul>
         </div>
       </div>
@@ -1181,7 +1184,7 @@ python -u scripts/calibrate_handeye.py --camera wrist --solve</pre>
             <li><strong>rig scatter</strong> — 고정돼 있어야 할 변환의 흩어짐. 크면 보드가 움직였거나 FK가 실물과 다릅니다</li>
           </ul>
           <p style="margin:10px 0 0;color:var(--ink-soft);font-size:13.5px">
-            front는 그리퍼 태그로 독립적으로 풉니다(05단계) — 여기 오차가 그쪽으로 전파되지 않습니다.
+            front는 그리퍼 보드로 독립적으로 풉니다(05단계) — 여기 오차가 그쪽으로 전파되지 않습니다.
           </p>
         </div>
       </div>
@@ -1191,7 +1194,7 @@ python -u scripts/calibrate_handeye.py --camera wrist --solve</pre>
     <div class="step" data-step="4b">
       <div class="step-head">
         <span class="step-no">05</span>
-        <h3 class="step-title">front 카메라 hand-eye — 그리퍼 태그로 <span class="chip chip-site">#14</span></h3>
+        <h3 class="step-title">front 카메라 hand-eye — 그리퍼 보드로 <span class="chip chip-site">#14</span></h3>
         <label class="tick"><input type="checkbox"> 완료</label>
       </div>
       <div class="step-body">
@@ -1200,7 +1203,7 @@ python -u scripts/calibrate_handeye.py --camera wrist --solve</pre>
           시뮬레이션은 케이블·클램프·front 카메라 마운트를 모릅니다.
         </div>
         <p>
-          01에서 그리퍼에 테이프로 고정한 태그를 front 카메라가 여러 자세에서 직접 봅니다.
+          01에서 그리퍼 한쪽 면에 테이프로 고정한 ChArUco 보드를 front 카메라가 여러 자세에서 직접 봅니다.
           <strong>wrist 캘리브레이션과 독립적으로 풀립니다</strong> — 순서를 04보다 먼저 해도 무방합니다.
         </p>
         <div class="cmd">
@@ -1208,7 +1211,7 @@ python -u scripts/calibrate_handeye.py --camera wrist --solve</pre>
           <pre><span class="hash"># 수동: 팔을 직접 놓고 Enter</span>
 python scripts/calibrate_handeye.py --camera front --capture
 
-<span class="hash"># 자동 재생: sim에서 그리퍼 태그 가시성 검증된 24포즈</span>
+<span class="hash"># 자동 재생: sim에서 그리퍼 보드 가시성 검증된 24포즈</span>
 python scripts/calibrate_handeye.py --camera front --capture --replay
 
 python -u scripts/calibrate_handeye.py --camera front --solve</pre>
@@ -1216,12 +1219,12 @@ python -u scripts/calibrate_handeye.py --camera front --solve</pre>
         <div class="criteria">
           <h4>확인할 것</h4>
           <ul>
-            <li><strong>솔버 간 편차</strong> — 10 mm 초과면 경고. 포즈 다양성 부족이나 태그가 촬영 중 흔들렸을 가능성</li>
-            <li><strong>rig scatter</strong> — 그리퍼 태그가 실제로 고정돼 있었는지의 물리적 확인. 테이프가 헐거우면 여기서 드러납니다</li>
+            <li><strong>솔버 간 편차</strong> — 10 mm 초과면 경고. 포즈 다양성 부족이나 보드가 촬영 중 흔들렸을 가능성</li>
+            <li><strong>rig scatter</strong> — 그리퍼 보드가 실제로 고정돼 있었는지의 물리적 확인. 테이프가 헐거우면 여기서 드러납니다</li>
           </ul>
         </div>
         <div class="note">
-          그리퍼 태그로 잘 안 풀리면(태그가 자꾸 가려지거나 조명이 나쁘거나) 대안이 있습니다:
+          그리퍼 보드로 잘 안 풀리면(가려지거나 조명이 나쁘거나) 대안이 있습니다:
           <code>scripts/calibrate_handeye.py --camera front --solve --via-board</code> —
           04에서 얻은 손목캠 결과로 테이블 보드를 통해 front 위치를 대신 구합니다.
           이 경로는 오차가 wrist 결과 위에 쌓이므로 04를 먼저 잘 끝냈을 때만 씁니다

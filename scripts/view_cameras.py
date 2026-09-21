@@ -30,12 +30,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from so101.charuco import (  # noqa: E402
-    GRIPPER_TAG_IDS,
-    charuco_board,
-    detect_board,
-    detect_gripper_tags,
-)
+from so101.charuco import charuco_board, detect_board, gripper_board  # noqa: E402
 from so101.real.cameras import DEFAULT_SPECS, Camera, open_camera  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -74,29 +69,26 @@ def annotate(
             lines.append(f"not lockable: {', '.join(camera.exposure_lock.unsupported)}")
 
     if detect:
-        board = charuco_board()
-        detection = detect_board(canvas, board)
-        if detection.count:
+        # Both boards are checked regardless of which camera this is: they use
+        # disjoint marker id ranges specifically so either can be in frame
+        # without being confused for the other, and seeing both counts here is
+        # a useful sanity check in itself (e.g. the table board still sitting
+        # in the front camera's view during a gripper-board capture).
+        table_detection = detect_board(canvas, charuco_board())
+        if table_detection.count:
             cv2.aruco.drawDetectedCornersCharuco(
-                canvas, detection.charuco_corners, detection.charuco_ids, (0, 255, 0)
+                canvas, table_detection.charuco_corners, table_detection.charuco_ids,
+                (0, 255, 0),
             )
-        tags = detect_gripper_tags(canvas)
-        for tag_id, corners in tags.items():
-            pts = corners.astype(np.int32).reshape(-1, 1, 2)
-            cv2.polylines(canvas, [pts], True, (0, 128, 255), 2)
-            cv2.putText(
-                canvas,
-                str(tag_id),
-                tuple(corners[0].astype(int)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
+        gripper_detection = detect_board(canvas, gripper_board())
+        if gripper_detection.count:
+            cv2.aruco.drawDetectedCornersCharuco(
+                canvas, gripper_detection.charuco_corners, gripper_detection.charuco_ids,
                 (0, 128, 255),
-                1,
-                cv2.LINE_AA,
             )
         lines.append(
-            f"board corners: {detection.count}   "
-            f"gripper tags: {sorted(tags)} of {list(GRIPPER_TAG_IDS)}"
+            f"table corners: {table_detection.count}   "
+            f"gripper corners: {gripper_detection.count}"
         )
 
     for index, line in enumerate(lines):

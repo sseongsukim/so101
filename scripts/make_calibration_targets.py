@@ -5,17 +5,29 @@ Two targets, one job each:
 * the **table board** -- handheld for both cameras' intrinsic calibration,
   and left flat on the table for the wrist camera's eye-in-hand hand-eye
   solve;
-* the **gripper tags** -- taped to the gripper, and read directly by the
-  front camera for its own eye-to-hand hand-eye solve.  Nothing about the
-  front camera's extrinsic depends on the wrist camera's calibration this
-  way: each camera is solved on its own.  (A tag taped on is enough --
-  it does not need to be a permanent mount.)
+* the **gripper board** -- taped flat to one face of the gripper, and read
+  directly by the front camera for its own eye-to-hand hand-eye solve.
+  Nothing about the front camera's extrinsic depends on the wrist camera's
+  calibration this way: each camera is solved on its own.  (Tape is enough
+  -- it does not need to be a permanent mount.)
 
-Both are printed by default.  ``--no-gripper-tags`` skips the second sheet
+  This is a full ChArUco board, not individual tags glued to a multi-faced
+  mount.  A single *marker* seen near head-on suffers the classic planar pose
+  ambiguity, but a *board* with a dozen corners is far more resistant to it,
+  and hand-eye capture already spreads its poses across a wide range of
+  angles (see generate_handeye_poses.py) -- between the two, a flat board
+  taped to one face is enough, which is also how legalaspro/so101-ros-
+  physical-ai's proven hand-eye tool does it. Its individual markers are
+  kept at the same 30 mm this project already measured as the floor for the
+  front camera to read at a normal capture distance, which is larger than
+  that reference project's own board and makes this one noticeably bigger on
+  paper -- a deliberate trade against a board too small to read.
+
+Both are printed by default.  ``--no-gripper-board`` skips the second sheet
 for the fallback in ``calibrate_handeye.py --via-board``, which derives the
 front camera's pose from the wrist camera's view of the table board instead
--- useful if taping a tag to the gripper is genuinely not an option, at the
-cost of inheriting the wrist camera's own calibration error on top of an
+-- useful if taping anything to the gripper is genuinely not an option, at
+the cost of inheriting the wrist camera's own calibration error on top of an
 extra PnP solve (measured: a 2 mm error in the table board's recovered pose
 puts the front camera off by 5.8 mm on average, 14.1 mm worst case).
 
@@ -25,15 +37,19 @@ viewing requirement -- that requirement only applies to the ``--via-board``
 fallback, which is why ``--fx``/``--distance``/``--capture-width`` below stay
 around purely for that path's benefit.
 
-The generated geometry is written to ``calibration/board.yaml`` so the
-detector reads back exactly what was printed.  A mismatch there does not
-raise -- it returns a confident, wrong pose.
+Both boards' geometry is written to ``calibration/board.yaml`` and
+``calibration/gripper_board.yaml`` so the detector reads back exactly what
+was printed.  A mismatch there does not raise -- it returns a confident,
+wrong pose.  The two share one ArUco dictionary but draw from disjoint id
+ranges (table: 0-19, gripper: 20-29), so a detector built for one board
+cannot mistake a marker belonging to the other for its own, even if both are
+in the same frame.
 
 Examples:
 
     python scripts/make_calibration_targets.py
     python scripts/make_calibration_targets.py --square-mm 40
-    python scripts/make_calibration_targets.py --no-gripper-tags
+    python scripts/make_calibration_targets.py --no-gripper-board
 """
 
 from __future__ import annotations
@@ -52,17 +68,19 @@ from pathlib import Path
 # both failure modes.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from dataclasses import replace
+
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from so101.charuco import (
-    DICTIONARY_NAME,
-    GRIPPER_TAG_IDS,
-    GRIPPER_TAG_MM,
+    BOARD_SPEC_PATH,
+    GRIPPER_BOARD_SPEC_PATH,
     BoardSpec,
     charuco_board,
-    dictionary,
+    gripper_board,
+    load_gripper_board_spec,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -78,7 +96,7 @@ PAGES_MM = {"a4": (210.0, 297.0), "a3": (297.0, 420.0)}
 # above it for the heading.  Kept tight: A3 is only 297 mm tall and the grid
 # has to stay dense enough to pin the principal point.
 FOOTER_MM = 24.0
-TOP_MM = 10.0
+TOP_MM = 13.0
 MIN_SIDE_MARGIN_MM = 12.0
 
 
@@ -159,21 +177,31 @@ def _paste_array(page: Image.Image, array: np.ndarray, x_mm: float, y_mm: float)
     page.paste(Image.fromarray(array), (_mm(x_mm), _mm(y_mm)))
 
 
-def build_charuco_board(spec: BoardSpec) -> tuple[cv2.aruco.CharucoBoard, np.ndarray]:
-    board = charuco_board(spec=spec)
+def build_charuco_image(board, spec: BoardSpec) -> np.ndarray:
     size_px = (_mm(spec.width_mm), _mm(spec.height_mm))
-    image = board.generateImage(size_px, marginSize=0, borderBits=1)
-    return board, image
+    return board.generateImage(size_px, marginSize=0, borderBits=1)
 
 
-def render_table_board(spec: BoardSpec, page_name: str) -> Image.Image:
-    _, board_image = build_charuco_board(spec)
-    page = _blank_page(page_name, landscape=True)
+def render_charuco_sheet(
+    spec: BoardSpec,
+    page_name: str,
+    landscape: bool,
+    board_image: np.ndarray,
+    title: str,
+    id_range_label: str,
+    notes: list[str],
+) -> Image.Image:
+    """Shared layout for both printed boards: crop marks, title, notes, ruler.
+
+    The two boards differ only in geometry, page orientation and wording --
+    the crop-mark/ruler mechanics that actually matter for print fidelity are
+    identical, so they are written once here.
+    """
+    page = _blank_page(page_name, landscape)
     draw = ImageDraw.Draw(page)
 
-    board_w_mm = spec.width_mm
-    board_h_mm = spec.height_mm
-    page_w_mm, _ = _page_mm(page_name, landscape=True)
+    board_w_mm, board_h_mm = spec.width_mm, spec.height_mm
+    page_w_mm, _ = _page_mm(page_name, landscape)
     x_mm = (page_w_mm - board_w_mm) / 2.0
     # Keep the whole layout clear of the ~5 mm non-printable edge most printers
     # have; the ruler is useless if it lands in that band and gets clipped.
@@ -191,77 +219,61 @@ def render_table_board(spec: BoardSpec, page_name: str) -> Image.Image:
         draw.line([(cx - _mm(5), cy), (cx + _mm(5), cy)], fill=0, width=_mm(0.3))
         draw.line([(cx, cy - _mm(5)), (cx, cy + _mm(5))], fill=0, width=_mm(0.3))
 
-    title = _font(_mm(4.5))
-    body = _font(_mm(3.2))
+    title_font = _font(_mm(4.5))
+    body_font = _font(_mm(3.2))
     # Start clear of the top-left crop mark's +-5 mm reach so the title text
     # doesn't sit on top of it.
-    draw.text((_mm(x_mm + 14.0), _mm(6.0)), "SO-101 table calibration board", fill=0, font=title)
-    lines = [
+    draw.text((_mm(x_mm + 14.0), _mm(6.0)), title, fill=0, font=title_font)
+    header = [
         f"{spec.dictionary} | ChArUco {spec.cols}x{spec.rows} | "
         f"square {spec.square_mm:.0f} mm | marker {spec.marker_mm:.0f} mm | "
-        f"ids 0-{spec.marker_count - 1} | {date.today().isoformat()}",
-        "Print at 100% scale (turn OFF 'fit to page'). Matte paper only - gloss reflects and detection fails.",
-        "Mount flat on a rigid board with no bubbles; a warped board breaks the planar assumption.",
+        f"ids {id_range_label} | {date.today().isoformat()}",
+        *notes,
     ]
-    for index, line in enumerate(lines):
+    for index, line in enumerate(header):
         draw.text(
             (_mm(x_mm), _mm(y_mm + board_h_mm + 6.0 + index * 4.6)),
             line,
             fill=0,
-            font=body,
+            font=body_font,
         )
-    _draw_ruler(draw, x_mm, y_mm + board_h_mm + 22.0)
+    _draw_ruler(draw, x_mm, y_mm + board_h_mm + 6.0 + len(header) * 4.6 + 4.0)
     return page
 
 
-def render_gripper_tags() -> Image.Image:
-    tag_dictionary = dictionary()
-    page = _blank_page("a4", landscape=False)
-    draw = ImageDraw.Draw(page)
+def render_table_board(spec: BoardSpec, page_name: str) -> Image.Image:
+    board = charuco_board(spec=spec)
+    return render_charuco_sheet(
+        spec,
+        page_name,
+        landscape=True,
+        board_image=build_charuco_image(board, spec),
+        title="SO-101 table calibration board",
+        id_range_label=f"0-{spec.marker_count - 1}",
+        notes=[
+            "Print at 100% scale (turn OFF 'fit to page'). Matte paper only - gloss reflects and detection fails.",
+            "Mount flat on a rigid board with no bubbles; a warped board breaks the planar assumption.",
+        ],
+    )
 
-    title = _font(_mm(4.5))
-    body = _font(_mm(3.2))
-    draw.text((_mm(20.0), _mm(15.0)), "SO-101 gripper hand-eye tags", fill=0, font=title)
-    lines = [
-        f"{DICTIONARY_NAME} | {GRIPPER_TAG_MM:.0f} mm tags | "
-        f"ids {', '.join(str(i) for i in GRIPPER_TAG_IDS)} | {date.today().isoformat()}",
-        "Print at 100% scale. Mount the three tags on a small cube or bracket at",
-        "DIFFERENT angles, then fix that rigidly to the gripper.",
-        "A single head-on planar tag flips its rotation estimate (planar pose",
-        "ambiguity) and that error lands directly in the hand-eye solution.",
-        "The tags must not move relative to the gripper during capture.",
-    ]
-    for index, line in enumerate(lines):
-        draw.text((_mm(20.0), _mm(24.0 + index * 5.0)), line, fill=0, font=body)
 
-    tag_px = _mm(GRIPPER_TAG_MM)
-    y_mm = 62.0
-    for tag_id in GRIPPER_TAG_IDS:
-        marker = cv2.aruco.generateImageMarker(
-            tag_dictionary, tag_id, tag_px, borderBits=1
-        )
-        # A quiet zone is mandatory: without white margin the detector cannot
-        # find the tag border.
-        _paste_array(page, marker, 30.0, y_mm)
-        draw.rectangle(
-            [
-                (_mm(30.0 - 8.0), _mm(y_mm - 8.0)),
-                (_mm(30.0 + GRIPPER_TAG_MM + 8.0), _mm(y_mm + GRIPPER_TAG_MM + 8.0)),
-            ],
-            outline=0,
-            width=_mm(0.25),
-        )
-        draw.text(
-            (_mm(30.0 + GRIPPER_TAG_MM + 16.0), _mm(y_mm + GRIPPER_TAG_MM / 2 - 2.0)),
-            f"id {tag_id}   {GRIPPER_TAG_MM:.0f} x {GRIPPER_TAG_MM:.0f} mm"
-            "   (cut on the outer line, keep the white border)",
-            fill=0,
-            font=body,
-        )
-        y_mm += GRIPPER_TAG_MM + 26.0
-
-    _draw_ruler(draw, 30.0, y_mm + 6.0)
-    return page
+def render_gripper_board(spec: BoardSpec, page_name: str) -> Image.Image:
+    board = gripper_board(spec=spec)
+    return render_charuco_sheet(
+        spec,
+        page_name,
+        landscape=False,
+        board_image=build_charuco_image(board, spec),
+        title="SO-101 gripper hand-eye board",
+        id_range_label=f"{spec.id_offset}-{spec.id_offset + spec.marker_count - 1}",
+        notes=[
+            "Print at 100% scale. Tape flat to one face of the gripper, facing the front camera.",
+            "Rotational variety across capture poses matters far more than a tilted mount: this",
+            "board's many corners make the head-on flip ambiguity a single-marker tag would have",
+            "a non-issue, as long as the arm covers a real spread of angles while capturing.",
+            "Mount flat, no bubbles; the board must not move relative to the gripper during capture.",
+        ],
+    )
 
 
 def main() -> None:
@@ -303,13 +315,21 @@ def main() -> None:
         "at a higher one than the task runs at",
     )
     parser.add_argument(
-        "--no-gripper-tags",
+        "--no-gripper-board",
         action="store_true",
-        help="skip the gripper tag sheet. Printed by default: the front "
-        "camera's extrinsic is solved directly from a tag taped to the "
+        help="skip the gripper board sheet. Printed by default: the front "
+        "camera's extrinsic is solved directly from a board taped to the "
         "gripper (eye-to-hand) -- see calibrate_handeye.py. --via-board there "
         "is a fallback that needs nothing on the gripper, at the cost of "
         "depending on the wrist camera's own calibration.",
+    )
+    parser.add_argument(
+        "--gripper-marker-mm",
+        type=float,
+        default=30.0,
+        help="individual marker size on the gripper board; this, not the "
+        "square size, is what the front camera's readable range was measured "
+        "against",
     )
     parser.add_argument("--png", action="store_true")
     args = parser.parse_args()
@@ -324,8 +344,14 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     pages = {"table_charuco": render_table_board(spec, page_name)}
-    if not args.no_gripper_tags:
-        pages["gripper_aruco"] = render_gripper_tags()
+    grip_spec = None
+    if not args.no_gripper_board:
+        grip_spec = replace(
+            load_gripper_board_spec(),
+            marker_mm=args.gripper_marker_mm,
+            square_mm=round(args.gripper_marker_mm / args.marker_ratio, 2),
+        )
+        pages["gripper_board"] = render_gripper_board(grip_spec, "a4")
 
     for name, page in pages.items():
         pdf_path = args.out_dir / f"{name}.pdf"
@@ -337,9 +363,19 @@ def main() -> None:
             print(f"wrote {png_path}")
 
     # Record what was actually generated so the detector cannot be configured
-    # for a different board than the one on the table.
-    spec_path = spec.save()
+    # for a different board than the one on the table (or on the gripper).
+    spec_path = spec.save(BOARD_SPEC_PATH)
     print(f"wrote {spec_path}")
+    if grip_spec is not None:
+        grip_path = grip_spec.save(GRIPPER_BOARD_SPEC_PATH)
+        print(f"wrote {grip_path}")
+        print(
+            f"gripper board: {grip_spec.cols}x{grip_spec.rows}, square "
+            f"{grip_spec.square_mm:.1f} mm, marker {grip_spec.marker_mm:.1f} mm "
+            f"-> {grip_spec.width_mm:.0f}x{grip_spec.height_mm:.0f} mm, "
+            f"{grip_spec.corner_count} corners, ids {grip_spec.id_offset}-"
+            f"{grip_spec.id_offset + grip_spec.marker_count - 1}"
+        )
 
     def verdict(cell: float) -> str:
         if cell < 3.0:
@@ -360,7 +396,7 @@ def main() -> None:
         print(
             "\n  Too small to read at the task resolution, which is fine for --via-board:\n"
             "  photograph the board at the higher one for that extrinsic solve. This does\n"
-            "  not matter at all for the default path (gripper tags), which never views\n"
+            "  not matter at all for the default path (gripper board), which never views\n"
             "  the table board from across the room."
         )
 

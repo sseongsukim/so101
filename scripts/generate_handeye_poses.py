@@ -13,7 +13,7 @@ greedily for rotational spread rather than taken as they come.
 Two sequences are produced, because the two cameras need opposite things:
 
 * ``wrist`` -- eye-in-hand.  The table board must be in the wrist camera's view.
-* ``front`` -- eye-to-hand.  The gripper tags must be in the front camera's view.
+* ``front`` -- eye-to-hand.  The gripper board must be in the front camera's view.
 
 Examples:
 
@@ -66,17 +66,20 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 import so101.tasks  # noqa: E402,F401  (registers environments)
-from so101.charuco import (  # noqa: E402
-    BOARD_COLS,
-    BOARD_ROWS,
-    GRIPPER_TAG_MM,
-    SQUARE_MM,
-)
+from so101.charuco import load_board_spec, load_gripper_board_spec  # noqa: E402
 from so101.configs import make_env_cfg  # noqa: E402
 from so101.scenes.tabletop import ROBOT_BASE_BOTTOM_Z  # noqa: E402
 
-BOARD_W = BOARD_COLS * SQUARE_MM / 1000.0
-BOARD_H = BOARD_ROWS * SQUARE_MM / 1000.0
+# Read back what was actually printed rather than BoardSpec's bare defaults --
+# calibration/board.yaml has long since diverged from those defaults (8x5 at
+# 32 mm vs the dataclass's 7x5 at 30 mm), and this file used the wrong ones
+# silently until now.
+_TABLE_SPEC = load_board_spec()
+_GRIPPER_SPEC = load_gripper_board_spec()
+BOARD_W = _TABLE_SPEC.width_mm / 1000.0
+BOARD_H = _TABLE_SPEC.height_mm / 1000.0
+GRIPPER_BOARD_W = _GRIPPER_SPEC.width_mm / 1000.0
+GRIPPER_BOARD_H = _GRIPPER_SPEC.height_mm / 1000.0
 
 # Where the board is assumed to sit for planning purposes: flat on the table,
 # centred on the cube workspace.  Expressed in the ENVIRONMENT frame, which is
@@ -117,17 +120,20 @@ def board_points() -> np.ndarray:
     return np.array([BOARD_CENTRE_ENV + np.array([dx, dy, 0.0]) for dx, dy in offsets])
 
 
-def tag_points(gripper_pos: np.ndarray, gripper_rot: np.ndarray) -> np.ndarray:
-    """Corners of a gripper-mounted tag, approximated as a square on the link.
+def gripper_board_points(gripper_pos: np.ndarray, gripper_rot: np.ndarray) -> np.ndarray:
+    """Outline and centre of the gripper board, approximated as flat on the link.
 
     The real mount offset is unknown until hand-eye solves for it, which is the
     point of the exercise.  For pose selection only the rough location matters.
     """
-    half = GRIPPER_TAG_MM / 2000.0
-    local = np.array(
-        [[-half, -half, 0.0], [half, -half, 0.0], [half, half, 0.0], [-half, half, 0.0]]
+    half_w, half_h = GRIPPER_BOARD_W / 2.0, GRIPPER_BOARD_H / 2.0
+    local = [
+        (-half_w, -half_h), (half_w, -half_h), (half_w, half_h), (-half_w, half_h),
+        (0.0, 0.0),
+    ]
+    return np.array(
+        [gripper_pos + gripper_rot @ np.array([dx, dy, 0.0]) for dx, dy in local]
     )
-    return np.array([gripper_pos + gripper_rot @ point for point in local])
 
 
 def visible_mask(
@@ -290,18 +296,20 @@ def main() -> None:
             intrinsics = rig[name]["intrinsics"]
             size = rig[name]["size"]
 
-            points = board if name == "wrist" else tag_points(gripper_pos, gripper_rot)
+            points = (
+                board if name == "wrist"
+                else gripper_board_points(gripper_pos, gripper_rot)
+            )
             mask = visible_mask(
                 points, cam_pos, cam_rot, intrinsics, size, MIN_TARGET_MARGIN_PX
             )
-            if name == "wrist":
-                # ChArUco resolves pose from partial views -- that is the point
-                # of it over a plain checkerboard.  Demanding the whole outline
-                # would force the wrist camera to stand far enough back that no
-                # reachable pose qualifies.  The last point is the centre.
-                ok = bool(mask[-1]) and int(mask.sum()) >= MIN_VISIBLE_BOARD_POINTS
-            else:
-                ok = bool(mask.all())
+            # Both targets are now full ChArUco boards, which resolve pose from
+            # partial views -- that is the point of ChArUco over a plain
+            # checkerboard or a single marker.  Demanding the whole outline be
+            # visible would force the camera to stand back far enough that few
+            # or no reachable poses qualify.  The last sample point is the
+            # board's centre, required regardless.
+            ok = bool(mask[-1]) and int(mask.sum()) >= MIN_VISIBLE_BOARD_POINTS
             if not ok:
                 rejected[name]["visibility"] += 1
                 continue

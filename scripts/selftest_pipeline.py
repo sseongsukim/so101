@@ -38,8 +38,9 @@ from so101.charuco import (  # noqa: E402
     board_object_points,
     charuco_board,
     detect_board,
+    gripper_board,
     load_board_spec,
-    tag_object_points,
+    load_gripper_board_spec,
 )
 from so101.handeye import (  # noqa: E402
     board_pose_in_env,
@@ -58,6 +59,7 @@ from so101.intrinsics import centered_virtual_matrix  # noqa: E402
 BOARD = load_board_spec()
 BOARD_W = BOARD.width_mm / 1000.0
 BOARD_H = BOARD.height_mm / 1000.0
+GRIPPER_SPEC = load_gripper_board_spec()
 SIZE = (640, 480)
 
 # A small board constrains the principal point weakly, and the fix is more
@@ -273,7 +275,7 @@ def synth_hand_eye(
             cv2.Rodrigues(np.array([-1.9, 0.35, 0.9]))[0],
             np.array([0.62, -0.50, 0.42]),
         )
-        rig = pose_matrix(  # tag pose on the gripper
+        rig = pose_matrix(  # gripper board pose on the gripper
             cv2.Rodrigues(np.array([0.2, 0.9, -0.1]))[0],
             np.array([0.01, -0.03, -0.02]),
         )
@@ -284,7 +286,9 @@ def synth_hand_eye(
     object_points = (
         board_object_points(charuco_board(), np.arange(BOARD.corner_count).reshape(-1, 1))
         if eye_in_hand
-        else tag_object_points()
+        else board_object_points(
+            gripper_board(), np.arange(GRIPPER_SPEC.corner_count).reshape(-1, 1)
+        )
     )
 
     attempts = 0

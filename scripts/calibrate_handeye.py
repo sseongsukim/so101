@@ -27,10 +27,18 @@ eye-in-hand, so the front camera's transforms are inverted before being passed
 in, which turns the same call into a solve for the camera's pose in the
 environment frame.  Getting this backwards produces a plausible, wrong answer.
 
-The default way to solve the front camera is a tag taped to the gripper
-(``--camera front --capture`` / ``--solve``, no extra flag): each camera is
-then solved independently, from its own images, with no dependency between
-them.  A tag taped on is enough -- it does not need to be a permanent mount.
+The default way to solve the front camera is a ChArUco board taped flat to
+the gripper (``--camera front --capture`` / ``--solve``, no extra flag):
+each camera is then solved independently, from its own images, with no
+dependency between them.  Tape is enough -- it does not need to be a
+permanent mount.  It is a full board, not a single marker glued to an
+angled mount: a board's many corners resist the head-on planar-pose
+ambiguity far better than one 4-corner marker would, and hand-eye capture
+already spans a wide range of angles across poses (see
+generate_handeye_poses.py), so a flat board is enough.  Both cameras'
+targets share one ArUco dictionary but disjoint id ranges (table board:
+0-19, gripper board: 20-29), so either can be in frame for the other's
+capture without being confused for it.
 
 ``--via-board`` is the fallback for when nothing can be attached to the
 gripper.  It needs the wrist camera calibrated first: the wrist camera
@@ -78,7 +86,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pose-file", type=_Path, default=None)
     parser.add_argument("--port", default="/dev/so101-follower")
     parser.add_argument("--robot-id", default="so101_follower")
-    parser.add_argument("--square-mm", type=float, default=None)
+    parser.add_argument(
+        "--square-mm",
+        type=float,
+        default=None,
+        help="measured printed square size, for whichever board --camera "
+        "implies (table for wrist, gripper for front); scales the marker "
+        "size with it, correcting for a printer that missed 100% scale",
+    )
     parser.add_argument(
         "--replay",
         action="store_true",
@@ -216,55 +231,39 @@ def capture(args) -> int:
     return 0
 
 
-def _target_pose_in_camera(args, frame, calibration, board, tag_id):
-    """``T_cam_target`` for one image, or ``None`` if the target is not usable."""
+def _target_pose_in_camera(frame, calibration, board):
+    """``T_cam_target`` for one image, or ``None`` if the target is not usable.
+
+    Identical for both cameras now: wrist looks for the table board, front
+    for the gripper board, but both are ChArUco boards solved the same way.
+    A single flat board resists the head-on planar-pose-ambiguity far better
+    than a lone 4-corner marker would (many more, more spread-out
+    correspondences for solvePnP to work with), and hand-eye capture already
+    spans a wide range of angles across poses -- see generate_handeye_poses.py
+    -- which is what actually keeps any one near-head-on view from mattering.
+    """
     import cv2
     import numpy as np
 
-    from so101.charuco import (
-        board_object_points,
-        detect_board,
-        detect_gripper_tags,
-        tag_object_points,
-    )
+    from so101.charuco import board_object_points, detect_board
     from so101.handeye import pose_matrix
 
-    if args.camera == "wrist":
-        detection = detect_board(frame, board)
-        if not detection.usable(minimum=8):
-            return None, detection.count
-        object_points = board_object_points(board, detection.charuco_ids)
-        image_points = detection.charuco_corners.reshape(-1, 2).astype(np.float64)
-        ok, rvec, tvec = cv2.solvePnP(
-            object_points,
-            image_points,
-            calibration.camera_matrix,
-            calibration.distortion,
-            flags=cv2.SOLVEPNP_ITERATIVE,
-        )
-        if not ok:
-            return None, detection.count
-        rotation, _ = cv2.Rodrigues(rvec)
-        return (pose_matrix(rotation, tvec), object_points, image_points), detection.count
-
-    tags = detect_gripper_tags(frame)
-    if tag_id not in tags:
-        return None, len(tags)
-    image_points = tags[tag_id].astype(np.float64)
-    object_points = tag_object_points()
-    # IPPE_SQUARE is the estimator meant for a single square marker; it returns
-    # the better-supported of the two solutions the planar ambiguity allows.
+    detection = detect_board(frame, board)
+    if not detection.usable(minimum=8):
+        return None, detection.count
+    object_points = board_object_points(board, detection.charuco_ids)
+    image_points = detection.charuco_corners.reshape(-1, 2).astype(np.float64)
     ok, rvec, tvec = cv2.solvePnP(
         object_points,
         image_points,
         calibration.camera_matrix,
         calibration.distortion,
-        flags=cv2.SOLVEPNP_IPPE_SQUARE,
+        flags=cv2.SOLVEPNP_ITERATIVE,
     )
     if not ok:
-        return None, len(tags)
+        return None, detection.count
     rotation, _ = cv2.Rodrigues(rvec)
-    return (pose_matrix(rotation, tvec), object_points, image_points), len(tags)
+    return (pose_matrix(rotation, tvec), object_points, image_points), detection.count
 
 
 def _board_pose_in_env(args, board):
@@ -492,7 +491,7 @@ def _solve_inner(args) -> int:
         matrix_to_quat_wxyz,
         quat_wxyz_to_matrix,
     )
-    from so101.charuco import MARKER_MM, SQUARE_MM, charuco_board, detect_gripper_tags
+    from so101.charuco import charuco_board, gripper_board
     from so101.configs import make_env_cfg
     from so101.handeye import inter_solver_spread, pose_matrix, solve_hand_eye
 
@@ -509,26 +508,13 @@ def _solve_inner(args) -> int:
         print(f"[fail] intrinsics for {args.camera!r} are required first: {error}")
         return 1
 
-    square_mm = args.square_mm or SQUARE_MM
-    board = charuco_board(square_mm, MARKER_MM * square_mm / SQUARE_MM)
-
-    # The hand-eye target must be one rigid frame across every pose, so for the
-    # gripper rig pick the single tag seen most often rather than mixing tags
-    # whose relative placement is unknown.
-    tag_id = None
-    if args.camera == "front":
-        counts: dict[int, int] = {}
-        for record in records:
-            frame = cv2.imread(str(capture_dir / record["image"]))
-            if frame is None:
-                continue
-            for found in detect_gripper_tags(frame):
-                counts[found] = counts.get(found, 0) + 1
-        if not counts:
-            print("[fail] no gripper tags detected in any capture")
-            return 1
-        tag_id = max(counts, key=lambda key: counts[key])
-        print(f"[info] gripper tag usage {counts}; using id {tag_id}")
+    # wrist watches the table board (fixed on the table); front watches the
+    # gripper board (taped to the gripper) -- disjoint marker id ranges, so
+    # whichever one happens to also be in frame is simply ignored.
+    if args.camera == "wrist":
+        board = charuco_board(args.square_mm) if args.square_mm else charuco_board()
+    else:
+        board = gripper_board(args.square_mm) if args.square_mm else gripper_board()
 
     cfg = make_env_cfg("so101-visual-StackCube-v0", num_envs=1, device=args.device)
     env = gym.make("so101-visual-StackCube-v0", cfg=cfg).unwrapped
@@ -548,7 +534,7 @@ def _solve_inner(args) -> int:
         if frame is None:
             skipped += 1
             continue
-        result, count = _target_pose_in_camera(args, frame, calibration, board, tag_id)
+        result, count = _target_pose_in_camera(frame, calibration, board)
         if result is None:
             print(f"  skipping {record['image']}: target not usable ({count} found)")
             skipped += 1
