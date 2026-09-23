@@ -6,6 +6,17 @@ arrays, so that the coefficients can be carried inside an agent's `config`
 """
 
 import numpy as np
+import jax.numpy as jnp
+
+
+def cosine_schedule(step, max_lr, min_lr, warmup_steps, cycle_steps):
+    """CosineAnnealingWarmupRestarts with cycle_mult=gamma=1."""
+    step = jnp.asarray(step) % cycle_steps
+    warmup = min_lr + (max_lr - min_lr) * step / max(warmup_steps, 1)
+    cosine = min_lr + (max_lr - min_lr) * (1 + jnp.cos(
+        jnp.pi * (step - warmup_steps) / (cycle_steps - warmup_steps)
+    )) / 2
+    return jnp.where(step < warmup_steps, warmup, cosine)
 
 
 def cosine_beta_schedule(denoising_steps, s=0.008):
@@ -33,9 +44,10 @@ def ddpm_schedule(denoising_steps, beta_schedule="cosine", cosine_s=0.008):
         raise ValueError(f"Unknown beta schedule '{beta_schedule}'.")
 
     # αₜ = 1 - βₜ, α̅ₜ = ∏ᵗₛ₌₁ αₛ, α̅ₜ₋₁
+    betas = np.asarray(betas, dtype=np.float32)
     alphas = 1.0 - betas
     alphas_cumprod = np.cumprod(alphas, axis=0)
-    alphas_cumprod_prev = np.concatenate([np.ones(1), alphas_cumprod[:-1]])
+    alphas_cumprod_prev = np.concatenate([np.ones(1, dtype=np.float32), alphas_cumprod[:-1]])
 
     # β̃ₜ = σₜ² = βₜ (1-α̅ₜ₋₁)/(1-α̅ₜ)
     ddpm_var = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)

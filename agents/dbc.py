@@ -1,4 +1,3 @@
-import copy
 from typing import Any
 
 import flax
@@ -8,14 +7,14 @@ import numpy as np
 import ml_collections
 import optax
 
-from utils.networks import ResMLPDiffusion, UNetActorVectorField
+from utils.networks import DiffusionMLP, UNetActorVectorField
 from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
 from utils.encoders import encoder_modules
 from utils.diffusion_utils import ddim_schedule, ddpm_schedule
 
 
 class DBCAgent(flax.struct.PyTreeNode):
-    """Diffusion Policy Behavior Cloning (FBC) agent."""
+    """Diffusion Policy Behavior Cloning (DBC) agent."""
 
     rng: Any
     network: Any
@@ -33,10 +32,8 @@ class DBCAgent(flax.struct.PyTreeNode):
             return eps  # the network directly predicts x₀
 
         if self.config["use_ddim"]:
-            # x₀ = (xₜ - √ (1-αₜ) ε) / √ αₜ
             return (x - sqrt_one_minus_alpha * eps) / jnp.sqrt(alpha)
 
-        # x₀ = √ 1/α̅ₜ xₜ - √ (1/α̅ₜ - 1) ε
         return (
             self._coef("sqrt_recip_alphas_cumprod", t, x.ndim) * x
             - self._coef("sqrt_recipm1_alphas_cumprod", t, x.ndim) * eps
@@ -51,7 +48,6 @@ class DBCAgent(flax.struct.PyTreeNode):
         noise = jax.random.normal(noise_rng, (batch_size, horizon_steps, action_dim))
         t = jax.random.randint(t_rng, (batch_size,), 0, self.config["denoising_steps"])
 
-        # Forward process: xₜ = √ α̅ₜ x₀ + √ (1-α̅ₜ) ε
         x_noisy = (
             self._coef("sqrt_alphas_cumprod", t, x_start.ndim) * x_start
             + self._coef("sqrt_one_minus_alphas_cumprod", t, x_start.ndim) * noise
@@ -129,7 +125,6 @@ class DBCAgent(flax.struct.PyTreeNode):
             x, iter_rng = carry
             iter_rng, step_rng = jax.random.split(iter_rng)
 
-            # Walk t from denoising_steps - 1 down to 0.
             t_index = self.config["denoising_steps"] - 1 - i
             t = jnp.full(batch_dims, t_index, dtype=jnp.int32)
 
@@ -138,14 +133,12 @@ class DBCAgent(flax.struct.PyTreeNode):
             if denoised_clip_value is not None:
                 x_recon = jnp.clip(x_recon, -denoised_clip_value, denoised_clip_value)
 
-            # μₜ = β̃ₜ √ α̅ₜ₋₁/(1-α̅ₜ) x₀ + √ αₜ (1-α̅ₜ₋₁)/(1-α̅ₜ) xₜ
             mu = (
                 self._coef("ddpm_mu_coef1", t, x.ndim) * x_recon
                 + self._coef("ddpm_mu_coef2", t, x.ndim) * x
             )
             logvar = self._coef("ddpm_logvar_clipped", t, x.ndim)
 
-            # The last step is deterministic; elsewhere keep the std off zero.
             std = jnp.where(t_index == 0, 0.0, jnp.clip(jnp.exp(0.5 * logvar), 1e-3))
             noise = jnp.clip(
                 jax.random.normal(step_rng, x.shape),
@@ -172,12 +165,10 @@ class DBCAgent(flax.struct.PyTreeNode):
             )
             if denoised_clip_value is not None:
                 x_recon = jnp.clip(x_recon, -denoised_clip_value, denoised_clip_value)
-                # Re-derive epsilon from the clamped x₀.
                 eps = (x - jnp.sqrt(alpha) * x_recon) / sqrt_one_minus_alpha
             if eps_clip_value is not None:
                 eps = jnp.clip(eps, -eps_clip_value, eps_clip_value)
 
-            # μ = √ αₜ₋₁ x₀ + √ (1-αₜ₋₁-σₜ²) ε, deterministic for eta = 0.
             dir_xt = jnp.sqrt(jnp.clip(1.0 - alpha_prev - sigma**2, 0.0)) * eps
             return jnp.sqrt(alpha_prev) * x_recon + dir_xt, iter_rng
 
@@ -226,7 +217,7 @@ class DBCAgent(flax.struct.PyTreeNode):
             encoders["actor"] = encoder_module()
 
         if config["network_type"] == "mlp":
-            actor_def = ResMLPDiffusion(
+            actor_def = DiffusionMLP(
                 hidden_dims=config["hidden_dims"],
                 time_step_embed_dim=config["time_step_embed_dim"],
                 horizon_steps=config["horizon_steps"],
@@ -278,8 +269,6 @@ class DBCAgent(flax.struct.PyTreeNode):
         config["action_dim"] = action_dim
         config["ob_dims"] = ob_dims
 
-        # DDPM/DDIM coefficients live in `config` (as hashable tuples) so that the
-        # agent's PyTreeNode fields stay exactly as they are.
         ddpm_params = ddpm_schedule(
             config["denoising_steps"],
             beta_schedule=config["beta_schedule"],
@@ -317,44 +306,35 @@ class DBCAgent(flax.struct.PyTreeNode):
 def get_config():
     config = ml_collections.ConfigDict(
         dict(
-            agent_name="dbc",  # Agent name.
-            lr=3e-4,  # Learning rate for the optimizer.
-            batch_size=256,  # Batch size used during training.
+            agent_name="dbc",
+            architecture="diffusion_mlp",
+            lr=1e-4,
+            batch_size=256,
             hidden_dims=(1024, 1024, 1024, 1024, 1024),
-            # Hidden layer dimensions of the actor MLP.
-            layer_norm=True,  # Whether to apply layer normalization in the actor network.
+            layer_norm=True,
             dataset_class="MultistepDataset",
-            # Dataset class name (e.g., for multi-step trajectories).
-            network_type="mlp",  # Network type
-            horizon_steps=24,  # Number of action steps predicted in parallel.
+            network_type="mlp",
+            horizon_steps=16,
             weight_decay=1e-6,
-            time_step_embed_dim=32,  # Dimensionality of the diffusion timestep embedding.
-            encoder=ml_collections.config_dict.placeholder(
-                str
-            ),  # Visual encoder name (None, 'impala_small', etc.).
-            inference_steps=4,  # Number of inference steps.
-            # UNet
+            time_step_embed_dim=32,
+            encoder=ml_collections.config_dict.placeholder(str),
+            inference_steps=4,
             dim=256,
             dim_mults=(1, 2, 4),
             kernel_size=5,
             n_groups=8,
-            # DDPM parameters
-            denoising_steps=20,  # Number of DDPM denoising steps.
-            predict_epsilon=True,  # Predict the noise instead of x_0.
-            beta_schedule="cosine",  # Beta schedule ('cosine' or 'linear').
-            cosine_s=0.008,  # Offset of the cosine beta schedule.
-            # Various clipping
-            denoised_clip_value=1.0,  # Clip the predicted x_0 at each step.
-            randn_clip_value=10.0,  # Clip the noise sampled at each step.
-            final_action_clip_value=1.0,  # Clip the action returned by the last step.
-            eps_clip_value=ml_collections.config_dict.placeholder(
-                float
-            ),  # Clip the predicted epsilon (DDIM only).
-            # DDIM sampling
-            use_ddim=False,  # Sample with DDIM instead of DDPM.
-            ddim_discretize="uniform",  # DDIM timestep discretization.
-            ddim_steps=10,  # Number of DDIM sampling steps.
-            ddim_eta=0.0,  # DDIM noise scale (0 is deterministic).
+            denoising_steps=20,
+            predict_epsilon=True,
+            beta_schedule="cosine",
+            cosine_s=0.008,
+            denoised_clip_value=1.0,
+            randn_clip_value=10.0,
+            final_action_clip_value=ml_collections.config_dict.placeholder(float),
+            eps_clip_value=ml_collections.config_dict.placeholder(float),
+            use_ddim=False,
+            ddim_discretize="uniform",
+            ddim_steps=10,
+            ddim_eta=0.0,
         )
     )
     return config
