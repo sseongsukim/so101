@@ -19,9 +19,23 @@ from isaaclab.app import AppLauncher
 
 TASK_NAMES = (
     "so101-StackCube-v0",
+    "so101-visual-StackCube-v0",
 )
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_LEADER_CALIBRATION_DIR = REPO_ROOT / "calibration/teleoperators/so_leader"
+
+
+def _default_leader_calibration_dir() -> Path:
+    """Use the project calibration, or the standard LeRobot cache fallback."""
+    project_dir = REPO_ROOT / "calibration/teleoperators/so_leader"
+    cache_dir = Path.home() / ".cache/huggingface/lerobot/calibration/teleoperators/so_leader"
+    if (project_dir / "my_leader.json").is_file():
+        return project_dir
+    if (cache_dir / "my_leader.json").is_file():
+        return cache_dir
+    return project_dir
+
+
+DEFAULT_LEADER_CALIBRATION_DIR = _default_leader_calibration_dir()
 
 parser = argparse.ArgumentParser(
     description="Teleoperate an SO-101 task with a physical SO-101 leader arm."
@@ -68,15 +82,39 @@ parser.add_argument(
     default=Path("outputs/teleop"),
     help="Directory for collected .pkl trajectories (default: outputs/teleop).",
 )
+parser.add_argument(
+    "--visual",
+    action="store_true",
+    help="Collect wrist/front RGB images along with joint state and actions.",
+)
+parser.add_argument(
+    "--image-width",
+    type=int,
+    default=320,
+    help="Stored RGB width in visual mode; source camera remains 640x480.",
+)
+parser.add_argument(
+    "--image-height",
+    type=int,
+    default=240,
+    help="Stored RGB height in visual mode; source camera remains 640x480.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
 selected_task = args_cli.task_option or args_cli.task_name
+if args_cli.visual:
+    if selected_task is None:
+        selected_task = "so101-visual-StackCube-v0"
+    elif selected_task == "so101-StackCube-v0":
+        selected_task = "so101-visual-StackCube-v0"
 if selected_task is None:
     parser.error("a task name is required (positional or via --task)")
 if args_cli.rate < 0.0:
     parser.error("--rate must be non-negative")
-args_cli.enable_cameras = False
+if args_cli.image_width <= 0 or args_cli.image_height <= 0:
+    parser.error("--image-width and --image-height must be positive")
+args_cli.enable_cameras = selected_task == "so101-visual-StackCube-v0"
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
@@ -85,18 +123,26 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import so101.tasks  # noqa: E402,F401  (registers environments)
 from so101.configs import make_env_cfg  # noqa: E402
+from so101.learning.act.data import to_uint8_rgb  # noqa: E402
 from so101.real.collect_enum import CollectEnum  # noqa: E402
 from so101.real.interface import LeRobotSO101Interface  # noqa: E402
 from so101.real.keyboard import KeyboardInterface  # noqa: E402
 
 
 class TrajectoryBuffer:
-    """In-memory buffer for one state-only teleoperation trajectory."""
+    """In-memory buffer for one teleoperation trajectory.
+
+    Visual trajectories additionally contain uint8 RGB frames under
+    ``front_images`` and ``wrist_images``. Keeping images separate from the
+    state arrays preserves compatibility with the existing state-only pickle
+    reader while making the files directly usable by an ACT data adapter.
+    """
 
     _INDEXED_FILENAME = re.compile(r"^trajectory_(\d+)\.pkl$")
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path, image_size: tuple[int, int]) -> None:
         self.directory = directory
+        self.image_width, self.image_height = image_size
         self.next_index = self._find_next_index()
         self.clear()
 
@@ -120,6 +166,9 @@ class TrajectoryBuffer:
         self.terminals: list[bool] = []
         self.successes: list[bool] = []
         self.next_observations: list[np.ndarray] = []
+        self.front_images: list[np.ndarray] = []
+        self.wrist_images: list[np.ndarray] = []
+        self.wall_times: list[float] = []
 
     def __len__(self) -> int:
         return len(self.actions)
@@ -129,6 +178,17 @@ class TrajectoryBuffer:
         """Copy the single environment's state observation to host memory."""
         return observation["state"][0].detach().cpu().numpy().copy()
 
+    def _image(
+        self, observation: dict[str, torch.Tensor], key: str
+    ) -> np.ndarray:
+        """Resize a visual observation and convert it to uint8 RGB.
+
+        Shared with ACT inference so live frames match the training data.
+        """
+        return to_uint8_rgb(
+            observation[key][0], (self.image_height, self.image_width)
+        )
+
     def append(
         self,
         observation: dict[str, torch.Tensor],
@@ -137,6 +197,8 @@ class TrajectoryBuffer:
         terminal: bool,
         success: bool,
         next_observation: dict[str, torch.Tensor],
+        *,
+        visual: bool = False,
     ) -> None:
         self.observations.append(self._state(observation))
         self.actions.append(action[0].detach().cpu().numpy().copy())
@@ -144,6 +206,12 @@ class TrajectoryBuffer:
         self.terminals.append(terminal)
         self.successes.append(success)
         self.next_observations.append(self._state(next_observation))
+        if visual:
+            self.front_images.append(self._image(observation, "front_image"))
+            self.wrist_images.append(self._image(observation, "wrist_image"))
+        # Each env.step advances 1/30 s of sim time regardless of how long it
+        # took; the wall-clock stamps show whether the demo was slowed down.
+        self.wall_times.append(time.perf_counter())
 
     def save(
         self,
@@ -170,7 +238,18 @@ class TrajectoryBuffer:
             "terminals": np.asarray(self.terminals, dtype=np.bool_),
             "successes": np.asarray(self.successes, dtype=np.bool_),
             "next_observations": np.stack(self.next_observations),
+            "wall_times": np.asarray(self.wall_times, dtype=np.float64),
         }
+        if self.front_images:
+            data.update(
+                {
+                    "front_images": np.stack(self.front_images),
+                    "wrist_images": np.stack(self.wrist_images),
+                    "image_format": "uint8_rgb",
+                    "image_shape": [self.image_height, self.image_width, 3],
+                    "image_size_source": [640, 480],
+                }
+            )
         with path.open("xb") as file:
             pickle.dump(data, file, protocol=pickle.HIGHEST_PROTOCOL)
         self.next_index += 1
@@ -214,7 +293,11 @@ def teleop_task() -> None:
     )
     leader_connected = False
     keyboard: KeyboardInterface | None = None
-    trajectory = TrajectoryBuffer(args_cli.dataset_dir)
+    trajectory = TrajectoryBuffer(
+        args_cli.dataset_dir,
+        image_size=(args_cli.image_width, args_cli.image_height),
+    )
+    visual_collection = selected_task == "so101-visual-StackCube-v0"
 
     try:
         keyboard = KeyboardInterface()
@@ -230,7 +313,17 @@ def teleop_task() -> None:
         print(f"[INFO] Leader serial port: {args_cli.port}")
         print(f"[INFO] Dataset directory: {args_cli.dataset_dir.resolve()}")
         print(f"[INFO] Next trajectory index: {trajectory.next_index:06d}")
-        print("[INFO] Recording only when a mapped leader joint value changes.")
+        print(f"[INFO] RGB cameras: {'enabled' if visual_collection else 'disabled'}")
+        if visual_collection:
+            print(
+                f"[INFO] Stored RGB size: "
+                f"{args_cli.image_width}x{args_cli.image_height} "
+                "(source 640x480)"
+            )
+        if visual_collection:
+            print("[INFO] Recording every 30 Hz control tick for RGB/ACT data.")
+        else:
+            print("[INFO] Recording only when a mapped leader joint value changes.")
         print("[INFO] Keyboard: t = save and pause, r = reset and resume collection.")
         print("[INFO] Automatic success/timeout resets are disabled for teleoperation.")
         print("[INFO] Press Ctrl+C or close the Isaac Sim window to stop.")
@@ -246,9 +339,9 @@ def teleop_task() -> None:
                         force_success=True,
                     )
                     if path is None:
-                        print("[DATA] Nothing to save.", flush=True)
+                        print("[INFO] Nothing to save.", flush=True)
                     else:
-                        print(f"[DATA] Saved {path}; collection paused.", flush=True)
+                        print(f"[INFO] Saved {path}; collection paused.", flush=True)
                     collecting = False
                     last_recorded_action = None
                     continue
@@ -260,7 +353,7 @@ def teleop_task() -> None:
                     collecting = True
                     last_recorded_action = None
                     print(
-                        f"[DATA] Reset; discarded {discarded} transitions and "
+                        f"[INFO] Reset; discarded {discarded} transitions and "
                         "resumed collection.",
                         flush=True,
                     )
@@ -284,7 +377,13 @@ def teleop_task() -> None:
                     # connecting or resetting alone must not create a sample.
                     last_recorded_action = actions.clone()
                 else:
-                    if not torch.equal(actions, last_recorded_action):
+                    # ACT needs a fixed-rate image/state sequence.  Keep the
+                    # historical motion-only filtering for state-only data,
+                    # but record every control tick when RGB cameras are on.
+                    should_record = visual_collection or not torch.equal(
+                        actions, last_recorded_action
+                    )
+                    if should_record:
                         trajectory.append(
                             observation,
                             actions,
@@ -292,33 +391,17 @@ def teleop_task() -> None:
                             done,
                             success,
                             next_observation,
+                            visual=visual_collection,
                         )
                         last_recorded_action.copy_(actions)
-                        joint_values = env.unwrapped.robot.data.joint_pos[0]
-                        joint_text = ", ".join(
-                            f"{value:.5f}" for value in joint_values.tolist()
-                        )
-                        print(
-                            f"[DATA] step={len(trajectory):06d} "
-                            f"joints=[{joint_text}] "
-                            f"reward={float(_first_value(reward, 0.0)):.6f} "
-                            f"success={success}",
-                            flush=True,
-                        )
+                        # Keep the terminal/action/image data in the pickle,
+                        # but do not print every collected sample.
                 observation = next_observation
 
-                if collecting and done:
-                    path = trajectory.save(
-                        force_terminal=True, force_success=success
-                    )
-                    if path is None:
-                        print(
-                            "[DATA] Episode ended without leader motion; nothing saved.",
-                            flush=True,
-                        )
-                    else:
-                        print(f"[DATA] Episode ended; saved {path}", flush=True)
-                    last_recorded_action = None
+                # Do not save automatically when the simulator reports done.
+                # The operator explicitly finalizes a trajectory with `t`, so
+                # incomplete or accidental episodes cannot silently become
+                # dataset files.
 
             remaining = control_period - (time.perf_counter() - step_started)
             if remaining > 0.0:

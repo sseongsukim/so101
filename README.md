@@ -391,3 +391,58 @@ run별 metric은 `evaluation/*`로 step=run index에 기록하고, 2회 이상�
 결과는 `exp/eval/<env_name>/<agent_name>/<exp_name>/`에 `flags.json`, `eval.csv`,
 (2회 이상일 때) `eval_summary.json`으로 저장합니다. 집계값은 `CsvLogger`의 header가
 첫 run 행에서 고정되기 때문에 CSV가 아니라 JSON으로 남깁니다.
+
+## 모방학습 (visual ACT)
+
+so101-ros의 standalone PyTorch ACT(`act/`)를 `src/so101/learning/act/`로 이식했다.
+`config`/`model`/`policy`/`checkpoint`는 import 경로 외 동일하고, LeRobotDataset 대신
+`teleop_task.py --visual`이 저장한 `trajectory_*.pkl`을 변환 없이 바로 읽는다
+(`data.py`).
+
+```bash
+# 1) 수집: 30 Hz 매 tick마다 state(6) + action(6) + front/wrist RGB(240x320) 기록
+python scripts/teleop_task.py --visual --dataset-dir outputs/act_sim
+
+# 2) 학습 (Isaac Sim 불필요, torch만 있으면 됨)
+python scripts/train_act.py --data-dir outputs/act_sim --out outputs/act_train/run0 \
+    --steps 100000 --batch-size 8 --save-freq 10000 --min-length 30
+```
+
+샘플 t는 `observations[t]`, `front_images[t]`, `wrist_images[t]`와
+`actions[t:t+chunk_size]`(에피소드 끝을 넘으면 마지막 action 반복 + `action_is_pad`)로
+구성된다. key 대응: `observations`→`observation.state`, `actions`→`action`,
+`front_images`→`observation.images.front`, `wrist_images`→`observation.images.wrist`.
+
+출력 디렉토리:
+
+- `act_so101.pt`, `step_*.pt`: `{"model", "config", "step"}` (so101-ros와 같은 포맷,
+  `ACTPolicy.from_checkpoint`로 로드)
+- `stats.json`: state/action/image MEAN_STD. 추론에서도 이 파일로 정규화하고, 모델
+  출력 action은 `action` 통계로 역정규화한다. std가 `1e-3` 미만인 state/action 차원은
+  `utils/datasets.Normalizer`와 같은 규칙으로 1.0(무스케일)로 둔다.
+- `train_info.json`: 학습에 쓴 에피소드 목록, 이미지 크기, 카메라 key 대응.
+
+추론 시 카메라 프레임(시뮬 640x480, 실물도 동일 해상도)은 반드시
+`so101.learning.act.data.to_uint8_rgb`로 `train_info.json`의 크기로 줄인 뒤
+`image_to_tensor`로 [0, 1] CHW로 바꾼다. `teleop_task.py`도 같은 함수로 저장하므로
+학습/추론 전처리가 한 곳에서 관리된다.
+
+시뮬 평가 (`so101-visual-StackCube-v0`, 성공은 env별로 처음 달성한 step에서 latch):
+
+```bash
+python scripts/eval_act_sim.py --checkpoint outputs/act_train/run0/act_so101.pt --headless \
+    --num-envs 4 --num-rounds 5 --n-action-steps 20 --video-dir outputs/act_eval/videos
+# temporal ensembling: --temporal-ensemble-coeff 0.01
+```
+
+결과는 `<checkpoint dir>/eval_sim.json`. 추론 경로(`so101.learning.act.inference.ACTRunner`)는
+리사이즈 → 정규화 → `select_action` → 역정규화를 한 곳에서 하므로 실물 루프에서도 그대로 쓴다
+(실물 프레임은 BGR → RGB, 관절값은 `real_to_sim_obs_processor` 변환 후 입력).
+
+카메라/state 정렬 확인: `python -u scripts/check_camera_lag.py --headless`.
+두 자세를 매 step 순간이동시키며 이미지가 state보다 몇 step 늦는지 측정하고, `env.reset()`이
+돌려주는 프레임이 reset 이전 장면(stale)인지도 확인한다. 2026-09-27 측정: step 지연 0,
+reset 프레임은 stale (`num_rerenders_on_reset=0`) — teleop은 reset 직후 tick을 기록하지 않고
+eval은 1 step settle 후 시작하므로 영향 없음.
+
+테스트: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests -q`
