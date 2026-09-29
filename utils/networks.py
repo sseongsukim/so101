@@ -108,6 +108,192 @@ class ResMLP(nn.Module):
         return x
 
 
+def mish(x):
+    return x * jnp.tanh(jax.nn.softplus(x))
+
+
+class Linear(nn.Module):
+    """Linear layer with PyTorch's initialization."""
+
+    features: int
+
+    @nn.compact
+    def __call__(self, x):
+        bound = x.shape[-1] ** -0.5
+        return nn.Dense(
+            self.features,
+            # PPO uses a 0.001 clip range: batch-dependent reduced-precision
+            # matmuls can otherwise clip ratios even for an unchanged actor.
+            precision=jax.lax.Precision.HIGHEST,
+            kernel_init=nn.initializers.variance_scaling(1 / 3, "fan_in", "uniform"),
+            bias_init=lambda key, shape, dtype: jax.random.uniform(
+                key, shape, dtype, minval=-bound, maxval=bound
+            ),
+        )(x)
+
+
+class ResidualMLP(nn.Module):
+    """Two-layer pre-activation residual MLP."""
+
+    hidden_dims: Sequence[int]
+    layer_norm: bool = False
+
+    @nn.compact
+    def __call__(self, x):
+        width = self.hidden_dims[0]
+        assert len(self.hidden_dims) % 2 == 0
+        assert all(size == width for size in self.hidden_dims[:-1])
+        x = Linear(width)(x)
+        for _ in range((len(self.hidden_dims) - 2) // 2):
+            residual = x
+            if self.layer_norm:
+                x = nn.LayerNorm(epsilon=1e-6)(x)
+            x = Linear(width)(mish(x))
+            if self.layer_norm:
+                x = nn.LayerNorm(epsilon=1e-6)(x)
+            x = Linear(width)(mish(x))
+            x = x + residual
+        return Linear(self.hidden_dims[-1])(x)
+
+
+class DiffusionMLP(nn.Module):
+    hidden_dims: Sequence[int]
+    time_step_embed_dim: int
+    horizon_steps: int
+    action_dim: int
+    layer_norm: bool = False
+    encoder: nn.Module = None
+
+    @nn.compact
+    def __call__(self, observations, actions, times):
+        if self.encoder is not None:
+            observations = self.encoder(observations)
+        time = SinusoidalPosEmb(self.time_step_embed_dim)(times)
+        time = mish(Linear(self.time_step_embed_dim * 2)(time))
+        time = Linear(self.time_step_embed_dim)(time)
+        x = jnp.concatenate(
+            (
+                actions.reshape(len(actions), -1),
+                time,
+                observations.reshape(len(actions), -1),
+            ),
+            axis=-1,
+        )
+        x = ResidualMLP(
+            (*self.hidden_dims, self.horizon_steps * self.action_dim),
+            layer_norm=self.layer_norm,
+        )(x)
+        return x.reshape(actions.shape)
+
+
+class Value(nn.Module):
+    """State-value network.
+
+    Attributes:
+        hidden_dims: Hidden layer dimensions of the residual MLP.
+        layer_norm: Whether to apply layer normalization.
+        encoder: Optional encoder module to encode the observations.
+    """
+
+    hidden_dims: Sequence[int]
+    layer_norm: bool = False
+    encoder: nn.Module = None
+
+    @nn.compact
+    def __call__(self, observations):
+        if self.encoder is not None:
+            observations = self.encoder(observations)
+
+        v = ResidualMLP(
+            hidden_dims=(*self.hidden_dims, 1),
+            layer_norm=self.layer_norm,
+        )(observations)
+        return jnp.squeeze(v, axis=-1)
+
+
+class ResidualActor(nn.Module):
+    """Gaussian residual policy over a base action (ResiP).
+
+    The input is the concatenation of the (normalized) observation and the base
+    policy's action for the current step; the output is the mean and the log
+    standard deviation of the correction applied to that action.
+
+    Attributes:
+        hidden_dims: Hidden layer dimensions.
+        action_dim: Action dimension.
+        init_log_std: Initial log standard deviation of the residual.
+        learn_std: Whether the log standard deviation is a trained parameter.
+        action_head_std: Scale of the orthogonally initialized mean head. The
+            reference uses 0, so fine-tuning starts from the base policy itself.
+        layer_norm: Whether to apply layer normalization.
+    """
+
+    hidden_dims: Sequence[int]
+    action_dim: int
+    init_log_std: float = -1.0
+    learn_std: bool = False
+    action_head_std: float = 0.0
+    layer_norm: bool = False
+
+    @nn.compact
+    def __call__(self, observations):
+        x = observations
+        for size in self.hidden_dims:
+            x = nn.Dense(size, kernel_init=nn.initializers.kaiming_normal())(x)
+            if self.layer_norm:
+                x = nn.LayerNorm()(x)
+            x = nn.relu(x)
+        mean = nn.Dense(
+            self.action_dim,
+            use_bias=False,
+            kernel_init=nn.initializers.orthogonal(self.action_head_std),
+        )(x)
+        if self.learn_std:
+            log_std = self.param(
+                "log_std",
+                nn.initializers.constant(self.init_log_std),
+                (self.action_dim,),
+            )
+        else:
+            log_std = jnp.full((self.action_dim,), self.init_log_std)
+        return mean, jnp.broadcast_to(log_std, mean.shape)
+
+
+class ResidualCritic(nn.Module):
+    """Value network for the residual policy (ResiP).
+
+    A plain ReLU MLP over the same input as `ResidualActor`. The reference
+    initializes the output layer with a small orthogonal kernel and a positive
+    bias, so the value starts near a constant instead of at zero.
+
+    Attributes:
+        hidden_dims: Hidden layer dimensions.
+        last_layer_std: Scale of the orthogonally initialized output kernel.
+        last_layer_bias: Constant the output bias starts at.
+        layer_norm: Whether to apply layer normalization.
+    """
+
+    hidden_dims: Sequence[int]
+    last_layer_std: float = 0.25
+    last_layer_bias: float = 0.25
+    layer_norm: bool = False
+
+    @nn.compact
+    def __call__(self, observations):
+        x = observations
+        for size in self.hidden_dims:
+            x = nn.Dense(size, kernel_init=nn.initializers.kaiming_normal())(x)
+            if self.layer_norm:
+                x = nn.LayerNorm()(x)
+            x = nn.relu(x)
+        v = nn.Dense(
+            1,
+            kernel_init=nn.initializers.orthogonal(self.last_layer_std),
+            bias_init=nn.initializers.constant(self.last_layer_bias),
+        )(x)
+        return jnp.squeeze(v, axis=-1)
+
+
 class ResMLPDiffusion(nn.Module):
     """Residual MLP diffusion policy network.
 

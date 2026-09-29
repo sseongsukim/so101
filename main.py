@@ -1,9 +1,6 @@
 import os
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-# Isaac Lab sets the root logger to DEBUG, which uncovers JAX's compilation
-# debug logs; pin the jax/jaxlib loggers before jax is imported. WARNING keeps
-# TF_CPP_MIN_LOG_LEVEL at its default, unlike INFO.
 os.environ.setdefault("JAX_LOGGING_LEVEL", "WARNING")
 import random
 import time
@@ -48,9 +45,10 @@ flags.DEFINE_string(
     "Wandb group format. Available fields: run_group, env_name, agent_name.",
 )
 
-flags.DEFINE_integer("offline_steps", 2000000, "Number of offline steps.")
+flags.DEFINE_integer("offline_steps", 1000000, "Number of offline steps.")
+flags.DEFINE_integer("online_steps", 0, "Number of offline steps.")
 flags.DEFINE_integer("log_interval", 1000, "Logging interval.")
-flags.DEFINE_integer("save_interval", 1000000, "Save interval.")
+flags.DEFINE_integer("save_interval", 100000, "Save interval.")
 flags.DEFINE_integer("eval_interval", 250000, "Evaluation interval; 0 disables.")
 flags.DEFINE_integer(
     "num_envs", 50, "Parallel evaluation environments; each runs one episode."
@@ -67,52 +65,19 @@ config_flags.DEFINE_config_file("agent", "agents/dbc.py", lock_config=False)
 
 def main(_):
     config = FLAGS.agent
-    config["train_steps"] = FLAGS.offline_steps
+    config["train_steps"] = FLAGS.offline_steps + FLAGS.online_steps
 
     exp_name = get_exp_name(config["agent_name"], seed=FLAGS.seed)
 
-    # Save dir
     FLAGS.save_dir = os.path.join(
         FLAGS.save_dir, FLAGS.env_name, config["agent_name"], exp_name
     )
     os.makedirs(FLAGS.save_dir, exist_ok=True)
 
-    # Save parameters
-    flag_dict = get_flag_dict()
-    with open(os.path.join(FLAGS.save_dir, "flags.json"), "w") as f:
-        json.dump(flag_dict, f)
-
-    config_dict = config.to_dict()
-    with open(os.path.join(FLAGS.save_dir, "agent_config.json"), "w") as f:
-        json.dump(config_dict, f)
-
-    # Seed
     random.seed(FLAGS.seed)
     np.random.seed(FLAGS.seed)
 
-    # Wandb
-    setup_wandb(
-        project="so101",
-        group=FLAGS.wandb_group
-        or get_wandb_group(
-            FLAGS.run_group,
-            FLAGS.env_name,
-            config["agent_name"],
-            FLAGS.wandb_group_format,
-        ),
-        name=exp_name,
-        config={
-            **get_flag_dict(),
-            **config.to_dict(),
-        },
-        mode=FLAGS.wandb_mode,
-    )
-
-    # Env
     if FLAGS.eval_interval > 0:
-        # One environment per evaluation episode: every episode runs in a single
-        # batched rollout, and Isaac Lab's per-step cost barely grows with the
-        # environment count.
         eval_env, simulation_app = create_env(
             env_name=FLAGS.env_name,
             num_envs=FLAGS.num_envs,
@@ -122,12 +87,10 @@ def main(_):
             record_video=FLAGS.video_envs > 0,
         )
 
-    # Dataset
     with open(os.path.join(FLAGS.dataset_dir, f"{FLAGS.env_name}.pkl"), "rb") as f:
         train_dataset = pickle.load(f)
     train_dataset["terminals"][-1] = True
 
-    # Normalize before freezing the dataset.
     if FLAGS.restore_path is not None:
         normalizer = Normalizer.load(
             os.path.join(FLAGS.restore_path, "normalization.json")
@@ -155,6 +118,31 @@ def main(_):
 
     if hasattr(train_dataset, "pred_horizon"):
         train_dataset.pred_horizon = config["horizon_steps"]
+
+    flag_dict = get_flag_dict()
+    with open(os.path.join(FLAGS.save_dir, "flags.json"), "w") as f:
+        json.dump(flag_dict, f)
+
+    config_dict = config.to_dict()
+    with open(os.path.join(FLAGS.save_dir, "agent_config.json"), "w") as f:
+        json.dump(config_dict, f)
+
+    setup_wandb(
+        project="so101",
+        group=FLAGS.wandb_group
+        or get_wandb_group(
+            FLAGS.run_group,
+            FLAGS.env_name,
+            config["agent_name"],
+            FLAGS.wandb_group_format,
+        ),
+        name=exp_name,
+        config={
+            **get_flag_dict(),
+            **config.to_dict(),
+        },
+        mode=FLAGS.wandb_mode,
+    )
 
     ex_transition = train_dataset.sample(2)
 
@@ -199,14 +187,12 @@ def main(_):
             )
             eval_metrics = {f"evaluation/{k}": v for k, v in eval_info.items()}
             if len(renders) > 0:
-                # CsvLogger drops wandb media types, so this only goes to wandb.
                 eval_metrics["evaluation/video"] = get_wandb_video(
                     renders=renders, fps=FLAGS.video_fps
                 )
             wandb.log(eval_metrics, step=i)
             eval_logger.log(eval_metrics, step=i)
 
-        # Save agent.
         if i % FLAGS.save_interval == 0:
             save_agent(agent, FLAGS.save_dir, i)
 

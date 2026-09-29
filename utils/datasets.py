@@ -348,7 +348,7 @@ class Normalizer:
         self.stats = stats
 
     @classmethod
-    def fit(cls, observations, actions):
+    def fit(cls, observations, actions, observation_clip=5.0, clip_actions=True):
         dim = observations.shape[-1]
         if dim not in (6, 36):
             raise ValueError(f"Expected SO101 state dimension 6 or 36, got {dim}.")
@@ -364,26 +364,41 @@ class Normalizer:
             observation_mean=mean.tolist(), observation_std=std.tolist(),
             action_min=actions.min(axis=0).tolist(),
             action_max=actions.max(axis=0).tolist(), action_source="train_dataset",
+            observation_clip=observation_clip, clip_actions=clip_actions,
         ))
 
-    def normalize_observations(self, observations):
+    def normalize_observations(self, observations, dtype=np.float32):
         if isinstance(observations, dict):
             observations = observations["state"]
-        return ((np.asarray(observations, dtype=np.float32)
-                 - np.asarray(self.stats["observation_mean"], dtype=np.float32))
-                / np.asarray(self.stats["observation_std"], dtype=np.float32))
+        observations = ((np.asarray(observations, dtype=dtype)
+                 - np.asarray(self.stats["observation_mean"], dtype=dtype))
+                / np.asarray(self.stats["observation_std"], dtype=dtype))
+        clip = self.stats.get("observation_clip")
+        if clip is not None:
+            observations = np.clip(observations, -clip, clip)
+        return observations.astype(np.float32)
 
-    def normalize_actions(self, actions):
-        low = np.asarray(self.stats["action_min"], dtype=np.float32)
-        span = np.asarray(self.stats["action_max"], dtype=np.float32) - low
+    def normalize_actions(self, actions, dtype=np.float32):
+        actions = np.asarray(actions, dtype=dtype)
+        low = np.asarray(self.stats["action_min"], dtype=dtype)
+        span = np.asarray(self.stats["action_max"], dtype=dtype) - low
+        if not self.stats.get("clip_actions", True):
+            return np.where(
+                span < 1e-8, 0, 2 * (actions - low) / np.where(span < 1e-8, 1, span) - 1
+            ).astype(np.float32)
         # A constant action dimension maps to zero and always decodes to low.
         return np.where(span > 1e-6, 2 * (actions - low) / np.where(span > 1e-6, span, 1) - 1, 0).astype(np.float32)
 
-    def unnormalize_actions(self, actions, clip=True):
+    def unnormalize_actions(self, actions, clip=None):
         low = np.asarray(self.stats["action_min"], dtype=np.float32)
         span = np.asarray(self.stats["action_max"], dtype=np.float32) - low
-        span = np.where(span > 1e-6, span, 0)
+        if self.stats.get("clip_actions", True):
+            span = np.where(span > 1e-6, span, 0)
+        else:
+            span = np.where(np.abs(span) < 1e-8, 1, span)
         actions = np.asarray(actions)
+        if clip is None:
+            clip = self.stats.get("clip_actions", True)
         if clip:
             actions = np.clip(actions, -1, 1)
         return low + (actions + 1) * span / 2

@@ -1,120 +1,163 @@
 """SO101 rollout evaluation at the teleoperation control cadence."""
 
-import time
+import random
 
 import jax
 import numpy as np
 from tqdm import tqdm
 
 
-def supply_rng(f, rng=jax.random.PRNGKey(0)):
-    """Helper function to split the random number generator key before each call to the function."""
+def evaluate(
+    agent, env, normalizer, config, video_envs=0, video_frame_skip=3, seed=None
+):
+    """Run one complete episode per environment and report its metrics.
 
-    def wrapped(*args, **kwargs):
-        nonlocal rng
-        rng, key = jax.random.split(rng)
-        return f(*args, rng=key, **kwargs)
-
-    return wrapped
-
-
-def evaluate(agent, env, normalizer, config, video_envs=0, video_frame_skip=3):
+    Seeding the environment and torch makes the episode a function of `seed`
+    alone, but `torch.manual_seed` is global, so the rollout runs inside a
+    forked RNG: an evaluation must not decide what randomness the training that
+    follows it sees.
+    """
     import torch
 
-    # Called positionally below: passing `observations` by keyword would add a
-    # second jit cache entry for the same computation.
-    actor_fn = supply_rng(
-        agent.sample_actions, rng=jax.random.PRNGKey(np.random.randint(0, 2**32))
-    )
-    max_episode_steps = env.unwrapped.max_episode_length
-    action_steps = min(config["inference_steps"], config["horizon_steps"])
+    seed = 1042 if seed is None else int(seed)
     num_envs = env.unwrapped.num_envs
-    # Only one viewport exists, so a frame per environment means re-rendering
-    # the same physics state once per recorded environment.
-    video_envs = min(video_envs, num_envs)
-    camera = env.unwrapped.viewport_camera_controller
-    if video_envs > 0 and camera is None:
-        raise RuntimeError(
-            "Video recording needs a rendering-enabled app; create the "
-            "environment with record_video=True."
+    episode_steps = env.unwrapped.max_episode_length
+    act_steps = config["inference_steps"]
+    # The policy may predict further ahead than it executes -- the reference's
+    # furniture UNet configuration predicts 16 actions and runs the first 8 --
+    # so only the executed prefix has to fit, and it has to tile the episode so
+    # that no chunk straddles the horizon.
+    if config["horizon_steps"] < act_steps or episode_steps % act_steps:
+        raise ValueError(
+            "inference_steps must not exceed horizon_steps and must divide the "
+            "episode length."
         )
-    renders = [[] for _ in range(video_envs)]
 
-    # One episode per environment, all stepped together. Episodes finish at
-    # different steps, so `active` freezes an environment's accounting once it
-    # succeeds or terminates while the remaining ones keep running.
-    active = np.ones(num_envs, dtype=bool)
-    returns = np.zeros(num_envs, dtype=np.float64)
-    lengths = np.zeros(num_envs, dtype=np.int64)
-    successes = np.zeros(num_envs, dtype=bool)
-    # Stacking without the gripper-away requirement: latched the same way as
-    # success, so it reports whether the cube was ever placed on the target.
-    stackeds = np.zeros(num_envs, dtype=bool)
-    step_times = []
-
-    with torch.inference_mode():
-        observation, _ = env.reset()
-        # Compile and synchronize the policy before measuring control timing.
-        state = observation["state"].detach().cpu().numpy()
-        np.asarray(actor_fn(normalizer.normalize_observations(state)))
-        if video_envs > 0:
-            # The first render attaches the rgb annotator and comes back empty.
-            env.render()
-
-    action_chunk = None
-    for step in tqdm(range(max_episode_steps), desc="evaluation", leave=False):
-        step_started = time.perf_counter()
-        with torch.inference_mode():
-            if step % action_steps == 0:
-                state = observation["state"].detach().cpu().numpy()
-                observations = normalizer.normalize_observations(state)
-                actions = actor_fn(observations)
-                action_chunk = normalizer.unnormalize_actions(np.asarray(actions))
-
-            actions = torch.tensor(
-                action_chunk[:, step % action_steps],
-                dtype=torch.float32,
-                device=env.unwrapped.device,
-            )
-            # Exactly one env.step per target, using the environment control period.
-            observation, reward, terminated, truncated, info = env.step(actions)
-            step_reward = reward.detach().cpu().numpy()
-            step_success = info["success"].detach().cpu().numpy().astype(bool)
-            step_stacked = info["stacked"].detach().cpu().numpy().astype(bool)
-            step_done = (
-                torch.logical_or(terminated, truncated).detach().cpu().numpy()
-            )
-
-        # The step that ends an episode still counts towards its return and
-        # length, matching the single-environment rollout this replaces.
-        returns += step_reward * active
-        lengths += active
-        successes |= step_success & active
-        stackeds |= step_stacked & active
-        active &= ~(step_success | step_done)
-
-        if video_envs > 0 and (step % video_frame_skip == 0 or not active.any()):
-            with torch.inference_mode():
-                for env_index in range(video_envs):
-                    camera.set_view_env_index(env_index)
-                    renders[env_index].append(env.render().copy())
-
-        # No wall-clock pacing here. The simulator advances by a fixed dt per
-        # step with no real-time coupling, so sleeping to the control period
-        # would slow evaluation down without changing the rollout.
-        # (teleop_task.py does pace, because a human and the leader arm are in
-        # the loop there.) step_time measures how long one batched control step
-        # costs; it is a throughput number, not the single-robot control
-        # latency, which only a num_envs=1 rollout can report.
-        step_times.append(time.perf_counter() - step_started)
-        if not active.any():
-            break
-
-    metrics = {
-        "return": float(returns.mean()),
-        "length": float(lengths.mean()),
-        "success": float(successes.mean()),
-        "stacked": float(stackeds.mean()),
-        "step_time": float(np.mean(step_times)),
+    rng = jax.random.PRNGKey(seed + 100000)
+    success = np.zeros(num_envs, dtype=bool)
+    stacked = success.copy()
+    first = np.full(num_envs, -1.0)
+    totals = {
+        key: np.zeros(num_envs)
+        for key in (
+            "dense_return",
+            "success_steps",
+            "reward_distance",
+            "reward_lift",
+            "reward_align",
+            "reward_success",
+        )
     }
-    return metrics, [np.asarray(render) for render in renders]
+    renders = [[] for _ in range(min(video_envs, num_envs))]
+
+    python_state, numpy_state = random.getstate(), np.random.get_state()
+    devices = (
+        list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
+    )
+    try:
+        with torch.random.fork_rng(devices=devices), torch.inference_mode():
+            observation, _ = env.reset(seed=seed)
+            torch.manual_seed(seed + 100000)
+            if renders:
+                # The first render attaches the annotator and comes back empty.
+                env.render()
+            for chunk in tqdm(range(episode_steps // act_steps), desc="evaluation"):
+                state = normalizer.normalize_observations(
+                    observation["state"].cpu().numpy()
+                )
+                rng, sample_rng = jax.random.split(rng)
+                actions = torch.as_tensor(
+                    normalizer.unnormalize_actions(
+                        np.asarray(agent.sample_actions(state, rng=sample_rng))
+                    ),
+                    dtype=torch.float32,
+                    device=env.unwrapped.device,
+                )
+                dense = torch.zeros(num_envs, device=env.unwrapped.device)
+                solved_steps = torch.zeros_like(dense)
+                components = torch.zeros((4, num_envs), device=env.unwrapped.device)
+                chunk_success = torch.zeros_like(dense, dtype=torch.bool)
+                chunk_stacked = torch.zeros_like(chunk_success)
+                chunk_first = torch.full_like(dense, -1)
+                for step in range(act_steps):
+                    observation, reward, terminated, truncated, info = env.step(
+                        actions[:, step]
+                    )
+                    # Every environment runs the full horizon, so a reset here
+                    # would sum rewards across an episode boundary.
+                    if (terminated | truncated).any().item():
+                        raise RuntimeError("An environment reset inside the rollout.")
+                    solved = info["success"].bool()
+                    dense += reward
+                    solved_steps += solved.float()
+                    chunk_first = torch.where(
+                        solved & (chunk_first < 0),
+                        chunk * act_steps + step + 1,
+                        chunk_first,
+                    )
+                    # Success replaces the shaping terms rather than adding to
+                    # them, so the four components sum to the dense return.
+                    shaping = (~solved).float()
+                    components[0] += 0.1 * info["reward_distance"] * shaping
+                    components[1] += 1.5 * info["reward_lift"] * shaping
+                    components[2] += 2.0 * info["reward_align"] * shaping
+                    components[3] += 16.0 * solved.float()
+                    chunk_success |= solved
+                    chunk_stacked |= info["stacked"].bool()
+                    if renders and (chunk * act_steps + step) % video_frame_skip == 0:
+                        # One viewport, so a frame per environment means
+                        # rendering the same physics state once for each.
+                        camera = env.unwrapped.viewport_camera_controller
+                        for env_index, frames in enumerate(renders):
+                            camera.set_view_env_index(env_index)
+                            frames.append(env.render().copy())
+                # One transfer for everything the chunk produced.
+                (
+                    dense,
+                    solved_steps,
+                    chunk_first,
+                    chunk_success,
+                    chunk_stacked,
+                    *components,
+                ) = (
+                    torch.cat(
+                        (
+                            dense[None],
+                            solved_steps[None],
+                            chunk_first[None],
+                            chunk_success[None],
+                            chunk_stacked[None],
+                            components,
+                        )
+                    )
+                    .cpu()
+                    .numpy()
+                )
+                success |= chunk_success.astype(bool)
+                stacked |= chunk_stacked.astype(bool)
+                hit = (first < 0) & (chunk_first >= 0)
+                first[hit] = chunk_first[hit]
+                totals["dense_return"] += dense
+                totals["success_steps"] += solved_steps
+                for key, value in zip(
+                    (
+                        "reward_distance",
+                        "reward_lift",
+                        "reward_align",
+                        "reward_success",
+                    ),
+                    components,
+                ):
+                    totals[key] += value
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+
+    metrics = {key: float(value.mean()) for key, value in totals.items()}
+    metrics.update(
+        success=float(success.mean()),
+        stacked=float(stacked.mean()),
+        success_step_fraction=float(totals["success_steps"].mean() / episode_steps),
+        first_success_step=float(first[success].mean()) if success.any() else -1.0,
+    )
+    return metrics, [np.asarray(frames) for frames in renders]

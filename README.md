@@ -118,7 +118,7 @@ success requires cube-center XY error below 1 cm, height error below 0.5 cm,
 and the end effector to be more than 2 cm from the small cube. Its distance
 gain is doubled to 20 and its lift-clearance threshold is reduced to 2 cm to
 match cubes half the size of the Franka example. Success sets
-`terminated=True`; the 350-step (approximately 11.67-second) time limit sets
+`terminated=True`; the 300-step (10-second) time limit sets
 `truncated=True` when success has not occurred.
 
 ### Leader-arm task teleoperation
@@ -217,8 +217,7 @@ cd research/so101
 python -m pip install -e '.[learning]'
 python main.py --env_name=so101-StackCube-v0 --agent=agents/fbc.py \
   --offline_steps=2000000 --wandb_mode=offline
-# DBC: --agent=agents/dbc.py
-# 설정 변경: --agent.batch_size=256 --agent.horizon_steps=24
+# FBC 설정 변경: --agent.batch_size=256 --agent.horizon_steps=24
 ```
 
 평가를 실행하려면 Isaac Lab/Isaac Sim과 learning 의존성이 같은 Python 환경에서
@@ -258,6 +257,12 @@ MjDex의 `FrozenDict` 기반 `Dataset`/`MultistepDataset`을 그대로 사용합
 두어 미세한 잡음을 증폭하지 않습니다. Quaternion은 단위 회전 표현이고 각
 성분이 이미 [-1, 1] 범위이므로 그대로 둡니다. 이 전처리는 별도의 CLI 옵션 없이
 `Normalizer.fit()`에 고정되어 있습니다.
+
+새 사전학습에서는 정규화된 observation을 `[-5, 5]`로 clipping하고 이 설정을
+`normalization.json`에 저장합니다. 평가와 DPPO fine-tuning은 저장된 observation
+변환을 그대로 사용합니다. 기존 checkpoint가 clipping 없이 학습되었다면 그
+설정도 유지합니다. DBC/DPPO의 DiffusionMLP와 critic은 배치 크기에 따른 수치
+오차가 PPO clipping에 영향을 주지 않도록 matmul 정밀도를 `HIGHEST`로 지정합니다.
 
 Visual 환경의 state는 관절 위치 6차원뿐이므로 이 경우 6개 모두 표준화합니다.
 수집 스크립트는 `observation['state']`만 저장하므로 카메라 이미지는 pickle에
@@ -311,14 +316,138 @@ python main.py --agent=agents/fbc.py --offline_steps=2000000 \
 ```
 
 복원 시 저장된 agent(optimizer 및 agent RNG 포함)와 정규화 통계를 불러옵니다.
-MjDex와 동일하게 학습 루프는 1부터 시작해 `offline_steps`번 업데이트하며,
+FBC는 MjDex와 동일하게 학습 루프는 1부터 시작해 `offline_steps`번 업데이트하며,
 로그와 체크포인트 번호도 새 run 기준입니다. 학습률 schedule은 현재 config로
 생성하고 optimizer 상태는 복원하므로, 이어서 학습할 때는 원래 agent 설정과
 총 step 수를 고려해야 합니다. 데이터 sampling RNG는 seed에서 시작합니다.
 
 
 
-### 환경 rollout 평가
+### DBC 사전학습과 DPPO fine-tuning
+
+기본 설정은 reference DPPO의
+`so101_stackcube_rm_stable_success_only_ta4_td20/2026-09-18_18-58-49_42`
+실행을 기반으로 하되, StackCube 장기 학습 비교를 위해 actor LR을 `3e-6`
+(최저 `3e-7`), sampling std 하한을 `0.015`로 조정했습니다. 이 값은 검증할
+실험 설정이며 성능 하락 방지가 확인된 설정은 아닙니다. 기존 stable 값으로
+비교하려면 `--agent.lr=1e-5 --agent.min_lr=1e-6
+--agent.min_sampling_denoising_std=0.01`을 지정합니다.
+Actor는 578,120개, critic은 141,313개의 파라미터를
+가지며 Mish pre-activation residual MLP를 사용합니다. 기존 FBC 네트워크는 별개입니다.
+
+```bash
+python main.py --agent=agents/dbc.py --offline_steps=1000000 --seed=0 \
+  --wandb_mode=offline
+
+python online.py --agent=agents/dppo.py --seed=42 --num_envs=512 \
+  --restore_path=exp/so101-StackCube-v0/dbc/<new_run> --restore_epoch=1000000 \
+  --wandb_mode=offline
+
+python inference.py --restore_path=exp/so101-StackCube-v0/dppo/<run> \
+  --restore_epoch=150 --video_envs=0 --wandb_mode=offline
+```
+
+DBC는 FBC와 같은 `main.py`의 step 기반 학습 흐름을 사용합니다. 매 step마다
+무작위 batch를 뽑고 같은 optimizer, checkpoint, logging 경로를 사용합니다.
+기본값은 1,000,000 update, batch 256, AdamW, learning rate `3e-4`,
+전체 step의 10% warmup 뒤 cosine decay입니다.
+
+DPPO는 저장된 DBC actor 가중치로 시작합니다. 위 명령은 512개 환경을 사용하며
+환경 수의 CLI 기본값은 1024입니다. Episode 300 step,
+예측/실행 horizon 4, denoising 20 step 중 마지막 10 step fine-tuning입니다.
+처음 10 iteration은 critic만 학습하고, iteration 11부터 actor를 학습합니다.
+Actor LR은 iteration마다 갱신하며 첫 적용값 `3e-7`, 최대 `3e-6`,
+warmup 10 actor iteration, cycle 1000입니다. Critic LR은 `1e-3` 고정입니다.
+전체 학습은 기본 1000 iteration이고 rollout당 PPO epoch 1회, batch 7500으로
+마지막 작은 minibatch까지 사용합니다.
+
+Observation 변환은 DBC의 저장된 설정을 유지합니다. 새 DBC는 정규화 후 ±5로
+clip하며 최종 action은 clip하지 않습니다. Sampling std 하한은 `0.015`,
+log-prob std 하한은 `0.1`입니다.
+학습 reward는 성공한 environment step 수입니다. 매 iteration 새 episode를
+`seed + iteration`으로 시작하고, 10 iteration마다 기본 seed 1042/2042에
+iteration에 따른 offset을 더해 평가합니다.
+평가는 성공 후에도 300 step 전체를 집계합니다.
+`params_initial.pkl`과 5 iteration 간격의 checkpoint를 저장합니다.
+
+기존 GELU/LayerNorm DBC checkpoint는 새 모델과 호환되지 않습니다.
+위 명령으로 새로 사전학습해야 합니다. 같은 seed라도 PyTorch와 JAX의 난수 및
+연산 구현이 달라 개별 rollout이나 최종 성공률까지 같다는 의미는 아닙니다.
+
+같은 가중치·입력·noise로 reference와 수치 비교하고 전체 학습 경로를 검증하려면:
+
+```bash
+JAX_PLATFORMS=cpu python -m unittest discover -s tests -p test_dppo_reference.py -v
+```
+
+이 테스트는 로컬 `reference/dppo`와 PyTorch가 필요하며 simulator 대신 작은 환경
+대역을 사용합니다.
+
+### ResiP fine-tuning
+
+ResiP(`reference/robust-rearrangement`)는 denoising chain을 직접 학습하는 DPPO와
+달리 사전학습 diffusion policy를 **얼린 채로** 두고, 그 위에 작은 Gaussian
+residual policy만 PPO로 학습합니다. Base policy가 chunk(예측/실행 horizon 4개)를
+제안하면 residual은 매 environment step마다 그 시점의 observation과 해당 step의
+base action을 함께 보고 `action_scale * residual`만큼 보정합니다. 따라서 PPO의
+transition은 chunk가 아니라 environment step이고, action 공간은 action_dim
+크기의 Gaussian입니다.
+
+```bash
+python online.py --agent=agents/resip.py --seed=42 \
+  --restore_path=exp/so101-StackCube-v0/dbc/<new_run> --restore_epoch=1000000 \
+  --wandb_mode=offline
+```
+
+DPPO와 같은 `online.py` 흐름(rollout 수집 → GAE → PPO minibatch 갱신 → 평가/체크
+포인트)을 사용하며, config와 checkpoint 형식도 동일합니다. Agent는 `modules_base`
+(얼린 DBC actor), `modules_actor`(residual), `modules_critic`(residual observation에
+대한 value) 세 모듈을 가집니다. Residual의 mean head는 0으로 초기화되므로 학습
+시작 시점의 정책은 base policy와 정확히 같습니다. 기본값은 `action_scale=0.1`,
+고정 `init_log_std=-4.0`, actor LR `3e-4`(cosine), critic LR `5e-3`(cosine, warmup
+없이 0까지), clip 0.2, target KL 0.1, rollout당 PPO epoch 50회입니다.
+`residual_l1`/`residual_l2`로 보정 크기에 penalty를 줄 수 있습니다.
+
+네트워크와 최적화는 reference를 따릅니다. Actor는 ReLU MLP 256×2에 bias 없는
+orthogonal(std 0) 출력, critic은 같은 형태의 ReLU MLP 256×2에 출력 layer를
+orthogonal std `0.25` / bias `0.25`로 초기화합니다(DPPO가 쓰는 Mish residual MLP
+`Value`와 다릅니다). Gradient는 actor와 critic을 **하나의 norm으로 묶어** 1.0으로
+clip합니다. Reward는 reward 자체의 running standard deviation으로 나눈 뒤 ±5로
+clip합니다 — DPPO가 쓰는 rolling discounted sum 기반 `RunningRewardScaler`와 다른
+방식이라 `online.py`가 agent에 따라 갈라 씁니다.
+
+Reference ResiP는 iteration 수를 직접 지정하지 않고 environment step 예산
+(`total_timesteps=1e9`)만 주며, `num_iterations = total_timesteps // (num_envs *
+num_env_steps)`로 파생시켜 cosine LR schedule 길이로 씁니다. 1024 environment
+기준으로 one_leg(700 step)는 1,395, mug_rack(400 step)은 2,441 iteration입니다.
+so101은 episode가 300 step이라 기본값인 1024 environment에서 iteration당 307,200
+env step이고, 같은 1e9 예산이면 3,255 iteration입니다. `--online_iters`와
+`--agent.lr_cycle_iters`는 같은 값으로 맞춰야 LR cycle이 학습 길이와 어긋나지
+않습니다. Gradient step 수로 비교할 때는 reference가 rollout당 50 epoch(단일
+minibatch, target KL로 조기 종료) 설정을 그대로 따릅니다. `lr_cycle_iters`
+기본값은 0이고, 이때 cosine cycle 길이는 `--online_iters`를 그대로 따라가므로
+학습 길이를 바꿔도 따로 맞출 값이 없습니다.
+
+Rollout이 environment step 단위로 쌓이므로 메모리는 `num_envs * episode_steps *
+(ob_dim + action_dim)`에 비례합니다. Minibatch 크기는 reference와 같이
+`num_minibatches`(기본 1, 즉 rollout 전체가 minibatch 하나)로 지정하며
+`num_envs * episode_steps`에서 자동으로 계산되므로 `--num_envs`를 바꿔도 따로
+맞출 값이 없습니다. DPPO는 reference/dppo를 따라 절대 크기 `batch_size`를
+그대로 씁니다.
+
+`init_log_std`는 reference의 `-1.0` 대신 `-4.0`을 기본값으로 씁니다. so101의
+action은 절대 관절 각도(radian)를 정규화한 값이라, `-1.0`(정규화 단위 std
+`exp(-1) * 0.1 = 0.037`, 관절 데모 범위의 약 1.8%)을 매 control step마다 독립적으로
+더하면 보정이 아니라 jitter가 됩니다. 32 environment 1 iteration 측정에서 `-1.0`은
+rollout success 0.0 / eval 0.41, `-4.0`은 rollout 0.53 / eval 0.63이었습니다.
+Rollout success가 0이면 `success_only` reward가 전부 0이라 학습 신호 자체가
+없습니다. Reference와 같은 값으로 비교하려면 `--agent.init_log_std=-1.0`을 넘깁니다.
+
+`inference.py`는 chunk 단위 API(`sample_actions`)를 쓰므로 residual을 chunk
+시작 시점의 observation으로 한 번만 계산합니다. Step마다 다시 계산하는 학습·평가
+경로와 다르므로, 정확한 성능은 `online.py`의 평가 결과를 기준으로 보십시오.
+
+### FBC 환경 rollout 평가
 
 학습 유틸리티는 저장소 루트의 `utils/`에 있습니다. `utils/env_utils.py`는
 `teleop_task.py`처럼 AppLauncher를 먼저 실행한 뒤 task를 등록하고,
@@ -362,7 +491,7 @@ python main.py --agent=agents/fbc.py --eval_interval=250000 \
 총 31,100 step, 평균 124.4 step, 중앙값 119 step, 최소 75 step, 최대 238 step입니다.
 개별 trajectory 파일 250개의 통계도 동일합니다. 이는 저장된 transition 수이며,
 정지 중 생략된 제어 tick은 포함하지 않습니다. 현재 StackCube의 환경 정의는
-`src/so101/configs/tasks.py`의 `STACK_CUBE_MAX_EPISODE_STEPS = 350`입니다.
+`src/so101/configs/tasks.py`의 `STACK_CUBE_MAX_EPISODE_STEPS = 300`입니다.
 
 ### 학습된 체크포인트 평가 (`inference.py`)
 

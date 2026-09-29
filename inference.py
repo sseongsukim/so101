@@ -32,15 +32,15 @@ from utils.log_utils import (
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("restore_path", None, "Trained experiment directory to evaluate.")
-flags.DEFINE_integer("restore_epoch", None, "Restore epoch.")
+flags.DEFINE_string("restore_epoch", None, "Checkpoint epoch, best, or last.")
 flags.DEFINE_string(
     "env_name", None, "Environment name; taken from the run's flags.json when unset."
 )
 flags.DEFINE_integer("seed", 42, "Random seed; each run derives its own seed from it.")
 flags.DEFINE_integer(
-    "num_envs", 50, "Parallel evaluation environments; each runs one episode."
+    "num_envs", None, "Parallel evaluation environments; default 512 for DBC/DPPO, 50 for FBC."
 )
-flags.DEFINE_integer("num_runs", 1, "Evaluation runs, for variance estimation.")
+flags.DEFINE_integer("num_runs", None, "Evaluation runs; default 2 for DBC/DPPO, 1 for FBC.")
 flags.DEFINE_integer(
     "video_envs", 4, "Environments to record during evaluation; 0 disables video."
 )
@@ -65,6 +65,12 @@ def main(_):
 
     with open(os.path.join(FLAGS.restore_path, "agent_config.json")) as f:
         config = ConfigDict(json.load(f))
+    for key, value in config.items():
+        if isinstance(value, list):
+            config[key] = tuple(value)
+    diffusion = config.get("architecture") == "diffusion_mlp"
+    num_envs = FLAGS.num_envs or (512 if diffusion else 50)
+    num_runs = FLAGS.num_runs or (2 if diffusion else 1)
 
     env_name = FLAGS.env_name
     if env_name is None:
@@ -108,7 +114,7 @@ def main(_):
     # Env
     eval_env, simulation_app = create_env(
         env_name=env_name,
-        num_envs=FLAGS.num_envs,
+        num_envs=num_envs,
         device=FLAGS.device,
         headless=FLAGS.headless,
         seed=FLAGS.seed,
@@ -140,10 +146,10 @@ def main(_):
     eval_logger = CsvLogger(os.path.join(save_dir, "eval.csv"))
     all_stats = {}
 
-    for run_idx in range(FLAGS.num_runs):
+    for run_idx in range(num_runs):
         # Each run gets a reproducibly different random state, so the initial
         # states and the policy sampling noise differ across runs.
-        run_seed = np.random.randint(0, 2**31)
+        run_seed = FLAGS.seed + 1000 * (run_idx + 1) if diffusion else np.random.randint(0, 2**31)
         random.seed(run_seed)
         np.random.seed(run_seed)
 
@@ -154,6 +160,7 @@ def main(_):
             config=config,
             video_envs=FLAGS.video_envs,
             video_frame_skip=FLAGS.video_frame_skip,
+            seed=run_seed,
         )
         eval_metrics = {f"evaluation/{k}": v for k, v in eval_info.items()}
         eval_metrics["run_seed"] = run_seed
@@ -169,23 +176,23 @@ def main(_):
             all_stats.setdefault(k, []).append(v)
 
         print(
-            f"\n=== Evaluation run {run_idx + 1}/{FLAGS.num_runs} "
+            f"\n=== Evaluation run {run_idx + 1}/{num_runs} "
             f"({env_name}, {config['agent_name']}, epoch {FLAGS.restore_epoch}) ==="
         )
         for k, v in sorted(eval_info.items()):
             print(f"  {k}: {v:.4f}")
 
-    if FLAGS.num_runs > 1:
+    if num_runs > 1:
         summary_metrics = {}
         for k, v in all_stats.items():
             summary_metrics[f"evaluation_mean/{k}"] = float(np.mean(v))
             summary_metrics[f"evaluation_std/{k}"] = float(np.std(v))
-        wandb.log(summary_metrics, step=FLAGS.num_runs)
+        wandb.log(summary_metrics, step=num_runs)
         # Not through CsvLogger: its header is fixed by the first per-run row,
         # so these keys would be dropped.
         with open(os.path.join(save_dir, "eval_summary.json"), "w") as f:
             json.dump(summary_metrics, f, indent=2)
-        print(f"\n=== Aggregate over {FLAGS.num_runs} runs ===")
+        print(f"\n=== Aggregate over {num_runs} runs ===")
         for k, v in sorted(summary_metrics.items()):
             print(f"  {k}: {v:.4f}")
 

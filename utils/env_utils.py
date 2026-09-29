@@ -12,6 +12,8 @@ def create_env(
     seed=0,
     record_video=False,
     video_resolution=(480, 270),
+    terminate_on_success=False,
+    truncate_on_timeout=False,
 ):
     # Isaac Lab's SimulationContext sets the root logger to DEBUG, which would
     # otherwise surface JAX's compilation logs (main.py also pins
@@ -35,8 +37,14 @@ def create_env(
 
     env_cfg = make_env_cfg(env_name, num_envs=num_envs, device=device)
     env_cfg.seed = seed
-    env_cfg.terminate_on_success = False
-    env_cfg.truncate_on_timeout = False
+    # Off by default. Collection and evaluation track episodes one at a time,
+    # and an on-policy rollout wants every environment to stay on the shared
+    # action-chunk boundary: Isaac Lab steps all environments in lockstep, so an
+    # environment that resets part-way through a chunk restarts out of phase
+    # with the rest. Both are separate switches because terminating on success
+    # and timing out are independent reasons to reset.
+    env_cfg.terminate_on_success = terminate_on_success
+    env_cfg.truncate_on_timeout = truncate_on_timeout
     if record_video:
         # The viewport render product is sized from the viewer config, and the
         # 1280x720 default costs ~1 GB of frames for a full rollout.
