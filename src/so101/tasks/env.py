@@ -268,6 +268,16 @@ class SO101TaskEnv(DirectRLEnv):
             held_on_left, fixed_y_magnitude, -fixed_y_magnitude
         )
 
+        # The configured spawn ranges are expressed relative to the robot's
+        # calibrated base frame.  Convert them to world coordinates after the
+        # robot root/table layout changed from the original centered table.
+        robot_root_xy = (
+            self.robot.data.root_pos_w[env_ids, :2]
+            - self.scene.env_origins[env_ids, :2]
+        )
+        fixed_xy += robot_root_xy
+        held_xy += robot_root_xy
+
         for asset in (self.fixed_asset, self.held_asset):
             root_state = asset.data.default_root_state[env_ids].clone()
             sampled_xy = held_xy if asset is self.held_asset else fixed_xy
@@ -305,6 +315,31 @@ class SO101TaskVisualEnv(SO101TaskEnv):
         super().__init__(cfg, render_mode, **kwargs)
         self.wrist_camera = self.scene["wrist_camera"]
         self.external_camera = self.scene["external_camera"]
+        self._hide_wrist_camera_mount()
+
+    def _hide_wrist_camera_mount(self) -> None:
+        """Hide the camera board/lens/cover model on the gripper (visual only).
+
+        The calibrated wrist camera (calibration/cameras/wrist.yaml, fitted on
+        2026-09-30 from a board at a known pose) sits at the real module, which
+        in the USD is inside this modelled mount, so rendering from there shows
+        the inside of the mount. The real camera never sees its own board.
+        The gripper's visuals are an instance, so instancing is switched off
+        for that prim before the mount can be edited.
+        """
+        import omni.usd
+        from pxr import UsdGeom
+
+        stage = omni.usd.get_context().get_stage()
+        for i in range(self.num_envs):
+            visuals = stage.GetPrimAtPath(f"/World/envs/env_{i}/Robot/gripper/visuals")
+            if not visuals.IsValid():
+                continue
+            if visuals.IsInstanceable():
+                visuals.SetInstanceable(False)
+            mount = stage.GetPrimAtPath(f"/World/envs/env_{i}/Robot/gripper/visuals/camera_mount")
+            if mount.IsValid():
+                UsdGeom.Imageable(mount).MakeInvisible()
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
         # Keep visual observations deployable on the real robot: only encoder

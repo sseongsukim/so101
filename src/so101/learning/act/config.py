@@ -54,6 +54,7 @@ class ACTConfig:
     vision_backbone: str = "resnet18"
     pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
     replace_final_stride_with_dilation: bool = False
+    separate_camera_backbones: bool = False
 
     # --- transformer ---
     pre_norm: bool = False

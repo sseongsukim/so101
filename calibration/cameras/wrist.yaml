@@ -1,0 +1,28 @@
+name: wrist
+device: /dev/video0
+resolution: [640, 480]
+fps: 30
+K:
+- [687.7170550122953, 0.0, 383.7086539864086]
+- [0.0, 687.0773121919705, 250.08477995244678]
+- [0.0, 0.0, 1.0]
+dist: [-0.4797977263218285, 0.32042585380523075, 0.0, 0.0, -0.15822459590872281]
+K_virtual:
+- [800.2362171286181, 0.0, 320.0]
+- [0.0, 800.2362171286181, 240.0]
+- [0.0, 0.0, 1.0]
+alpha: 0.0
+extrinsic:
+  parent: gripper
+  convention: ros
+  pos: [-0.004481587648388132, -0.07158671466662682, -0.007519480481391672]
+  quat_wxyz: [0.00997879343951881, 0.02784115228255014, 0.980437217791539, 0.19459742005036354]
+exposure: {}
+calib_rms_px: 0.26657579224339895
+handeye_rmse_px: 32.072239032905884
+hfov_loss_frac: 0.2138356963623762
+date: '2026-09-21'
+notes: 'Previous local wrist-camera setup restored: original SO-ARM101 USD, negative-Y
+  mount offset, and 180-degree roll. | known-board fit (/home/keti/workspace/research/so101-team/outputs/handeye/wrist_known_board,
+  22 views, 32.07 px) under the follower mapping with wrist_roll offset +8.00 deg
+  -- refit if that offset changes'

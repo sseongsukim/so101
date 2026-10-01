@@ -3,11 +3,8 @@
 Replaces ``stream_d435i.py``, which targeted a RealSense that is not part of
 this rig and imported a package the project never declared.
 
-The installed OpenCV is the headless wheel, so there is no preview window and
-the default is to write annotated frames to disk.  That also happens to be the
-mode that works over a remote session, which is when these images are most
-needed.  ``--show`` opens a window if a desktop build of ``opencv-python`` is
-installed instead.
+The default writes annotated frames to disk. ``--show`` opens live windows,
+using matplotlib when the installed OpenCV wheel is headless.
 
 Examples:
 
@@ -32,19 +29,11 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from so101.charuco import charuco_board, detect_board, gripper_board  # noqa: E402
 from so101.real.cameras import DEFAULT_SPECS, Camera, open_camera  # noqa: E402
+from so101.real.preview import PreviewWindow  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 DEFAULT_OUT = REPO_ROOT / "outputs" / "camera_views"
-
-
-def gui_available() -> bool:
-    try:
-        cv2.namedWindow("__probe__")
-        cv2.destroyWindow("__probe__")
-        return True
-    except cv2.error:
-        return False
 
 
 def annotate(
@@ -110,6 +99,11 @@ def main() -> int:
     )
     parser.add_argument("--raw", action="store_true", help="show unrectified frames")
     parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="save the unannotated frame (useful for PnP/extrinsic solving)",
+    )
+    parser.add_argument(
         "--no-detect", action="store_true", help="skip ChArUco/ArUco overlays"
     )
     parser.add_argument("--snapshot", action="store_true", help="one frame each, then exit")
@@ -130,14 +124,6 @@ def main() -> int:
     names = args.camera or sorted(DEFAULT_SPECS)
     detect = not args.no_detect
 
-    if args.show and not gui_available():
-        print(
-            "[fail] this OpenCV build has no GUI (opencv-python-headless).\n"
-            "       Install opencv-python for a window, or drop --show to write "
-            "annotated frames to disk."
-        )
-        return 1
-
     cameras = {
         name: open_camera(
             name, rectify=not args.raw, width=args.width, height=args.height
@@ -150,8 +136,10 @@ def main() -> int:
         elif not camera.is_rectified:
             print(f"[info] {name}: no calibration yet, frames are raw")
 
+    windows = {}
     try:
         if args.show:
+            windows = {name: PreviewWindow(name, size=(640, 480)) for name in names}
             print("[info] press q to quit")
             last = time.time()
             while True:
@@ -160,10 +148,9 @@ def main() -> int:
                     now = time.time()
                     fps = 1.0 / max(now - last, 1e-6)
                     last = now
-                    cv2.imshow(name, annotate(frame, camera, fps, detect))
-                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    windows[name].show(annotate(frame, camera, fps, detect))
+                if any(window.poll_key() in (ord("q"), 27) for window in windows.values()):
                     break
-            cv2.destroyAllWindows()
             return 0
 
         args.out.mkdir(parents=True, exist_ok=True)
@@ -180,10 +167,13 @@ def main() -> int:
                 fps = 10.0 / max(time.time() - start, 1e-6)
                 suffix = "raw" if args.raw else "rect"
                 path = args.out / f"{name}_{suffix}_{index:03d}.png"
-                cv2.imwrite(str(path), annotate(frame, camera, fps, detect))
+                output = frame if args.plain else annotate(frame, camera, fps, detect)
+                cv2.imwrite(str(path), output)
                 print(f"wrote {path}")
         return 0
     finally:
+        for window in windows.values():
+            window.close()
         for camera in cameras.values():
             camera.close()
 

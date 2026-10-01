@@ -53,11 +53,50 @@ class CameraSpec:
     # ringing.  Switch to "MJPG" if USB bandwidth cannot carry two uncompressed
     # streams at once; calibration itself runs one camera at a time.
     fourcc: str = "YUYV"
+    lock_exposure: bool = True
+    lock_white_balance: bool = True
+    target_brightness: float = 100.0
+    # Fixed manual exposure (exposure_time_absolute, 100 us units) and sensor
+    # gain; None meters the exposure / leaves the gain alone.
+    exposure: int | None = None
+    gain: int | None = None
+    # Snap metered exposures to multiples of this (exposure_time_absolute
+    # units, 100 us): 83 = 8.3 ms, one period of the 120 Hz flicker of 60 Hz
+    # mains lighting. Other exposure times show dark horizontal bands.
+    flicker_step: int | None = None
 
 
 DEFAULT_SPECS: dict[str, CameraSpec] = {
-    "wrist": CameraSpec(name="wrist", device="/dev/video0"),
-    "front": CameraSpec(name="front", device="/dev/video6"),
+    # This Innomaker's manual white-balance temperature does not reproduce
+    # the gains selected by its automatic mode: switching auto off at the
+    # reported 4600 K gives a strong cyan cast.  Its manual exposure behaves
+    # similarly poorly on this unit, so keep both controls automatic.  MJPEG
+    # is also the camera's cleanest 30 fps output at 640x480.
+    # Exposure, though, is fixed (2026-09-29): in auto mode this camera also
+    # raises its sensor gain, and at the policy's start pose it lifted the
+    # black tabletop to mean gray ~95 with heavy noise, while the simulated
+    # wrist view sits at ~42 (29-69 under rendering randomization). Manual
+    # exposure 120 with gain 0 measured ~47 there, with visibly less noise.
+    # Colour balance stays automatic for the reason above.
+    "wrist": CameraSpec(
+        name="wrist",
+        device="/dev/video0",
+        fourcc="MJPG",
+        lock_exposure=True,
+        lock_white_balance=False,
+        # 83 (8.3 ms), not the 120 first chosen: 12 ms is not a multiple of the
+        # lights' 8.3 ms flicker period and banded the image.
+        exposure=83,
+        gain=0,
+        flicker_step=83,
+    ),
+    # Fixed rather than re-metered on every open (2026-09-29): metering
+    # depends on what is in view -- arm pose, cubes, daylight through the
+    # windows -- so demo and deployment sessions would each get a different
+    # exposure. 6187 is what metering chose with the cubes on the table, the
+    # frame the simulated cube colors were fitted to (match_cube_colors.py).
+    # Re-measure if the room lighting changes a lot.
+    "front": CameraSpec(name="front", device="/dev/video6", exposure=6187),
 }
 
 
@@ -196,22 +235,34 @@ class Camera:
         calibration: CameraCalibration | None = None,
         *,
         rectify: bool = True,
-        lock_exposure: bool = True,
+        lock_exposure: bool | None = None,
+        lock_white_balance: bool | None = None,
         exposure: int | None = None,
         white_balance: int | None = None,
         settle_frames: int = 30,
-        target_brightness: float = 110.0,
+        target_brightness: float | None = None,
         brightness_tolerance: float = 10.0,
         metering_fraction: float = 0.5,
     ) -> None:
         self.spec = spec
         self.calibration = calibration
         self._want_rectify = rectify
-        self._lock_exposure = lock_exposure
-        self._exposure = exposure
+        self._lock_exposure = (
+            spec.lock_exposure if lock_exposure is None else lock_exposure
+        )
+        self._lock_white_balance = (
+            spec.lock_white_balance
+            if lock_white_balance is None
+            else lock_white_balance
+        )
+        self._exposure = exposure if exposure is not None else spec.exposure
         self._white_balance = white_balance
         self._settle_frames = settle_frames
-        self._target_brightness = target_brightness
+        self._target_brightness = (
+            spec.target_brightness
+            if target_brightness is None
+            else target_brightness
+        )
         self._brightness_tolerance = brightness_tolerance
         self._metering_fraction = metering_fraction
         self._capture: cv2.VideoCapture | None = None
@@ -246,8 +297,11 @@ class Camera:
                 f"expected {self.spec.width}x{self.spec.height}"
             )
 
-        if self._lock_exposure:
-            self._apply_exposure_lock()
+        # Apply the requested policy explicitly.  Merely "leaving" an auto
+        # control alone is not enough: UVC controls persist after a process
+        # exits, so a previous manual capture can otherwise poison the next
+        # session.
+        self._apply_exposure_lock()
         self._prepare_rectification()
         return self
 
@@ -274,10 +328,24 @@ class Camera:
         controls = _v4l2_controls(device)
         lock = ExposureLock()
 
-        if "auto_exposure" in controls:
+        if not self._lock_exposure:
+            if "auto_exposure" in controls:
+                _v4l2_set(device, "auto_exposure", 3)
+                lock.applied["auto_exposure"] = 3
+            logger.info("%s: using automatic exposure", device)
+        elif "auto_exposure" in controls:
             _v4l2_set(device, "auto_exposure", AUTO_EXPOSURE_MANUAL)
             lock.applied["auto_exposure"] = AUTO_EXPOSURE_MANUAL
+            # Gain first: metering below must see the gain it will run with.
+            if self.spec.gain is not None and "gain" in controls:
+                if _v4l2_set(device, "gain", int(self.spec.gain)):
+                    lock.applied["gain"] = int(self.spec.gain)
             exposure = self._exposure
+            if exposure is None and "exposure_time_absolute" in controls and self.spec.flicker_step:
+                exposure = self._search_exposure(device)
+                if exposure is not None:
+                    step = int(self.spec.flicker_step)
+                    exposure = max(step, int(round(exposure / step)) * step)
             if exposure is None and "exposure_time_absolute" in controls:
                 # Reading exposure_time_absolute while auto exposure is running
                 # returns the driver's default, not what the metering chose --
@@ -294,11 +362,19 @@ class Camera:
 
         # Holding the frame rate steady matters as much as holding exposure:
         # this control lets the driver drop below 30 fps in dim light.
-        if "exposure_dynamic_framerate" in controls:
+        if self._lock_exposure and "exposure_dynamic_framerate" in controls:
             if _v4l2_set(device, "exposure_dynamic_framerate", 0):
                 lock.applied["exposure_dynamic_framerate"] = 0
 
-        if "white_balance_automatic" in controls:
+        if not self._lock_white_balance:
+            if "white_balance_automatic" in controls:
+                _v4l2_set(device, "white_balance_automatic", 1)
+                lock.applied["white_balance_automatic"] = 1
+                # This camera needs more than one second for its colour gains
+                # to converge after manual mode has been left behind.
+                self._drain(self._settle_frames * 3)
+            logger.info("%s: using automatic white balance", device)
+        elif "white_balance_automatic" in controls:
             white_balance = self._white_balance
             if white_balance is None:
                 # Let automatic white balance settle and read what it chose.
@@ -321,7 +397,7 @@ class Camera:
 
         self.exposure_lock = lock
 
-    def _mean_brightness(self, settle: int = 4) -> float:
+    def _mean_brightness(self, settle: int = 30) -> float:
         """Mean brightness of the central region.
 
         Metering the whole frame lets bright background -- lab windows and
@@ -344,8 +420,8 @@ class Camera:
     def _search_exposure(self, device: str) -> int | None:
         """Pick a manual exposure that lands near ``self._target_brightness``.
 
-        Brightness rises monotonically with exposure time, so a bisection is
-        enough.  Doing the metering ourselves means the chosen value is
+        Brightness rises monotonically with exposure time, so a (log-scale)
+        bisection is enough.  Doing the metering ourselves means the chosen value is
         reproducible and gets recorded, instead of depending on a driver's
         hidden auto-exposure state.
         """
@@ -359,7 +435,12 @@ class Camera:
         for _ in range(10):
             if high - low <= 1:
                 break
-            mid = (low + high) // 2
+            # Geometric midpoint: brightness scales roughly with exposure
+            # time, and the wrist camera's working exposure (~20-120) sits at
+            # the bottom of a 1..5000 range, where a linear bisection spends
+            # most of its 10 steps far above the answer.
+            mid = int(round((low * high) ** 0.5))
+            mid = min(max(mid, low + 1), high - 1)
             if not _v4l2_set(device, "exposure_time_absolute", mid):
                 return None
             brightness = self._mean_brightness()
@@ -474,18 +555,32 @@ def calibration_name(camera: str, width: int, height: int) -> str:
     return f"{camera}_{width}x{height}"
 
 
+# Session metering targets: centre-50% gray mean (Camera._mean_brightness) of
+# the policies' training frames at the start pose (2026-09-30): synthetic
+# front 88 / wrist 55, real demos front 106 / wrist 58. A fixed exposure set
+# the day before read front 151 / wrist 148 in the next morning's sunlight,
+# so deployment re-meters at the start pose instead (open_camera(meter_to=)).
+METER_TARGETS = {"front": 100.0, "wrist": 57.0}
+
+
 def open_camera(
     name: str,
     *,
     device: str | None = None,
     calibration_dir: str | None = None,
     rectify: bool = True,
-    lock_exposure: bool = True,
+    lock_exposure: bool | None = None,
     fourcc: str | None = None,
     width: int | None = None,
     height: int | None = None,
+    meter_to: float | None = None,
 ) -> Camera:
-    """Open one of the rig's cameras by role name (``"wrist"`` or ``"front"``)."""
+    """Open one of the rig's cameras by role name (``"wrist"`` or ``"front"``).
+
+    ``meter_to`` replaces the spec's fixed exposure with a manual exposure
+    metered to that centre brightness on opening (see METER_TARGETS); point
+    the camera at the scene it will work in first.
+    """
     if name not in DEFAULT_SPECS:
         raise CameraError(
             f"unknown camera {name!r}; expected one of {sorted(DEFAULT_SPECS)}"
@@ -499,7 +594,17 @@ def open_camera(
             height=height or spec.height,
             fps=spec.fps,
             fourcc=fourcc or spec.fourcc,
+            lock_exposure=spec.lock_exposure,
+            lock_white_balance=spec.lock_white_balance,
+            target_brightness=spec.target_brightness,
+            exposure=spec.exposure,
+            gain=spec.gain,
+            flicker_step=spec.flicker_step,
         )
+    if meter_to is not None:
+        from dataclasses import replace
+
+        spec = replace(spec, exposure=None, lock_exposure=True, target_brightness=float(meter_to))
     calibration = try_load_calibration(
         calibration_name(name, spec.width, spec.height), calibration_dir
     )

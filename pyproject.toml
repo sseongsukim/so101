@@ -29,13 +29,14 @@ learning = [
 ]
 real = [
     "draccus",
-    "lerobot",
+    # SO-101 motors use the optional Feetech transport.  Plain `lerobot`
+    # installs the robot classes but omits the `scservo_sdk` module needed at
+    # connection time, so request the hardware extra explicitly.
+    "lerobot[feetech]",
     "matplotlib",
     "numpy",
-    # cv2.aruco is present in the headless wheel, so opencv-contrib is not
-    # needed.  Headless matches what lerobot pulls in; it has no GUI, so
-    # scripts/view_cameras.py falls back to writing frames unless a desktop
-    # build of opencv-python is installed instead.
+    # cv2.aruco is present in the headless wheel. Preview windows use
+    # matplotlib because lerobot itself depends on headless OpenCV.
     "opencv-python-headless",
     "pynput",
     "pyyaml",

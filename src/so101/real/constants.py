@@ -44,3 +44,14 @@ SO101_HOME_POSE = {
     "wrist_roll.pos": -51.9027,
     "gripper.pos": 0.0707,
 }
+
+# Reset pose of the StackCube tasks, in Isaac joint names and radians
+# (order: SO101_SIM_JOINT_ORDER).
+STACK_CUBE_DEFAULT_JOINT_POS = {
+    "Rotation": -0.0685,
+    "Pitch": -1.3674,
+    "Elbow": 1.3919,
+    "Wrist_Pitch": 1.0408,
+    "Wrist_Roll": -0.0211,
+    "Jaw": 0.0808,
+}

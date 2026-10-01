@@ -36,6 +36,7 @@ except ImportError:  # pragma: no cover - compatibility with the workshop versio
     make_teleoperator_from_config = None
 
 from .constants import SO101_JOINT_ORDER as _SO101_JOINT_ORDER
+from .joint_mapping import JointMapping, follower_mapping
 from .constants import SO101_USD_MAPPING as _SO101_USD_MAPPING
 
 
@@ -59,7 +60,15 @@ class LeRobotSO101Interface:
         kind: str = "leader",
         rename_map: dict = None,
         calibration_dir: str | Path | None = None,
+        joint_mapping: JointMapping | str | None = "auto",
     ):
+        """``joint_mapping`` decides how calibrated LeRobot values become Isaac
+        radians. "auto" gives a follower the fitted physical mapping when
+        calibration/joint_mapping/follower.yaml exists (see
+        so101.real.joint_mapping.follower_mapping) and a leader the linear
+        USD-range mapping: leader error only changes how teleoperation feels,
+        since the data it produces is simulated. None forces linear.
+        """
 
         self.port = port
         self.id = id
@@ -83,6 +92,11 @@ class LeRobotSO101Interface:
             dtype=torch.float32,
             device=self.device,
         )
+        if joint_mapping == "auto":
+            joint_mapping = (
+                follower_mapping(id, calibration_dir) if kind == "follower" else None
+            )
+        self.joint_mapping = joint_mapping
 
     def make_cameras_cfg(self):
         cameras = {}
@@ -124,6 +138,12 @@ class LeRobotSO101Interface:
                 port=self.port,
                 id=self.id,
                 cameras=cameras,
+                # The conversion methods below deliberately use LeRobot's
+                # calibrated [-100, 100] convention.  Current LeRobot
+                # versions default followers to physical degrees, which made
+                # commands and observations get mapped a second time and put
+                # the real arm at a different pose from Isaac.
+                use_degrees=False,
                 calibration_dir=self.calibration_dir,
             )
         raise ValueError(f"Unsupported SO-101 interface kind: {self.kind}")
@@ -156,6 +176,8 @@ class LeRobotSO101Interface:
         )
 
     def get_mapped_actions_vectorized(self, raw_values):
+        if self.joint_mapping is not None:
+            return self.joint_mapping.to_sim(raw_values)
         normalized = torch.zeros_like(raw_values)
         normalized[:-1] = (
             raw_values[:-1] + 100
@@ -169,6 +191,8 @@ class LeRobotSO101Interface:
         return mapped_deg * torch.pi / 180
 
     def get_raw_actions_from_radians(self, raw_values):
+        if self.joint_mapping is not None:
+            return self.joint_mapping.to_lerobot(raw_values)
         # Convert from radians to degrees
         mapped_deg = raw_values * 180 / torch.pi
 

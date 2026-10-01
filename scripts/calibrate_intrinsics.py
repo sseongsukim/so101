@@ -1,9 +1,8 @@
 """Measure one camera's intrinsics and write its calibration YAML.
 
-Runs on the rig, and deliberately gives its feedback through the terminal:
-the installed OpenCV is the headless wheel, so there is no preview window.
-After every shot it reports which parts of the frame still have no coverage
-and how much the board has been tilted, because those two things are what
+Runs on the rig. During capture it shows a live preview with the detected
+ChArUco corners, frame coverage, and board tilt. After every shot it also
+reports the same guidance in the terminal, because coverage and tilt are what
 separate a calibration that converges from one that quietly does not.
 
 Capture and solve are separate so a session can be re-solved without
@@ -118,6 +117,88 @@ def describe_gaps(covered: set[tuple[int, int]]) -> str:
     return ", ".join(missing) if missing else "none"
 
 
+def gui_available() -> bool:
+    """Return whether Matplotlib selected an interactive window backend."""
+    import matplotlib
+
+    backend = matplotlib.get_backend().lower()
+    return not backend.endswith("agg") or backend in {"tkagg", "qtagg", "qt5agg"}
+
+
+class PreviewWindow:
+    """Small Matplotlib-backed viewer that also works with headless OpenCV."""
+
+    def __init__(self, title: str) -> None:
+        import matplotlib.pyplot as plt
+
+        self._plt = plt
+        self._key: str | None = None
+        self._closed = False
+        self._figure, self._axes = plt.subplots()
+        self._figure.canvas.manager.set_window_title(title)
+        self._figure.canvas.mpl_connect("key_press_event", self._on_key)
+        self._figure.canvas.mpl_connect("close_event", self._on_close)
+        self._axes.axis("off")
+        self._image = None
+        plt.show(block=False)
+
+    def _on_key(self, event) -> None:
+        self._key = event.key
+
+    def _on_close(self, _event) -> None:
+        self._closed = True
+
+    def show(self, frame: np.ndarray) -> str | None:
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if self._image is None:
+            self._image = self._axes.imshow(rgb)
+            self._figure.tight_layout(pad=0)
+        else:
+            self._image.set_data(rgb)
+        self._figure.canvas.draw_idle()
+        self._figure.canvas.flush_events()
+        self._plt.pause(0.001)
+        key, self._key = self._key, None
+        return "q" if self._closed else key
+
+    def close(self) -> None:
+        self._plt.close(self._figure)
+
+
+def preview_frame(
+    frame: np.ndarray,
+    detection,
+    camera_name: str,
+    index: int,
+    wanted_shots: int,
+    covered: set[tuple[int, int]],
+    tilt: float | None,
+) -> np.ndarray:
+    canvas = frame.copy()
+    if detection.count:
+        cv2.aruco.drawDetectedCornersCharuco(
+            canvas, detection.charuco_corners, detection.charuco_ids, (0, 255, 0)
+        )
+
+    lines = [
+        f"{camera_name}  shots: {index}/{wanted_shots}  corners: {detection.count}/{board_corner_count()}",
+        f"tilt: {tilt:.0f} deg" if tilt is not None else "tilt: --",
+        f"uncovered: {describe_gaps(covered)}",
+        "SPACE/ENTER capture   D drop last   Q/ESC finish",
+    ]
+    for line_index, line in enumerate(lines):
+        y = 22 + line_index * 22
+        cv2.putText(
+            canvas, line, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+            (0, 0, 0), 3, cv2.LINE_AA,
+        )
+        cv2.putText(
+            canvas, line, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+            (255, 255, 255), 1, cv2.LINE_AA,
+        )
+    return canvas
+
+
 def capture_session(
     camera_name: str,
     capture_dir: Path,
@@ -126,6 +207,7 @@ def capture_session(
     square_mm: float | None,
     spec: CameraSpec,
     wanted_shots: int,
+    preview: bool,
 ) -> None:
     board = charuco_board(square_mm) if square_mm else charuco_board()
     size = (spec.width, spec.height)
@@ -137,10 +219,13 @@ def capture_session(
 
     covered: set[tuple[int, int]] = set()
     tilts: list[float] = []
+    preview_window = None
 
     # Rectification is off: this script exists to measure the distortion that
     # rectification removes.
     with Camera(spec, calibration=None, rectify=False) as camera:
+        if preview:
+            preview_window = PreviewWindow(f"Intrinsic calibration - {camera_name}")
         print(f"[info] {camera_name} open on {spec.device} at {size[0]}x{size[1]}")
         print(f"[info] exposure locked: {camera.exposure_lock.as_dict()}")
         print(
@@ -149,48 +234,95 @@ def capture_session(
             f"{MIN_TILT_DEG:.0f} deg or more. Head-on shots alone cannot "
             "separate\nfocal length from distance.\n"
         )
-        while True:
-            if auto:
-                if index >= auto:
+        if preview:
+            print("[info] preview: Space/Enter=capture, d=drop last, q/Esc=finish")
+        next_auto_capture = time.monotonic() + interval
+        try:
+            while True:
+                if auto and index >= auto:
                     break
-                time.sleep(interval)
-            else:
-                answer = input("[Enter] capture, 'q' finish, 'd' drop last: ").strip()
-                if answer.lower() == "q":
-                    break
-                if answer.lower() == "d":
-                    if index > 0:
-                        index -= 1
-                        (capture_dir / f"shot_{index:03d}.png").unlink(missing_ok=True)
-                        print(f"  dropped shot_{index:03d}.png")
+
+                if not preview and not auto:
+                    answer = input("[Enter] capture, 'q' finish, 'd' drop last: ").strip()
+                    if answer.lower() == "q":
+                        break
+                    if answer.lower() == "d":
+                        if index > 0:
+                            index -= 1
+                            (capture_dir / f"shot_{index:03d}.png").unlink(missing_ok=True)
+                            print(f"  dropped shot_{index:03d}.png")
+                        continue
+
+                # The preview loop continuously consumes the stream, so its
+                # current frame is already fresh. Terminal mode blocks between
+                # shots and must explicitly discard frames queued meanwhile.
+                frame = camera.read_raw() if preview else camera.read_fresh(raw=True)
+                detection = detect_board(frame, board)
+                tilt = None
+                if detection.usable():
+                    tilt = approximate_tilt_deg(
+                        detection.charuco_corners, detection.charuco_ids, board, size
+                    )
+
+                capture_requested = not preview and not auto
+                if preview_window is not None:
+                    key = preview_window.show(
+                        preview_frame(
+                            frame,
+                            detection,
+                            camera_name,
+                            index,
+                            wanted_shots,
+                            covered,
+                            tilt,
+                        )
+                    )
+                    if key in ("q", "escape"):
+                        break
+                    if key == "d":
+                        if index > 0:
+                            index -= 1
+                            (capture_dir / f"shot_{index:03d}.png").unlink(missing_ok=True)
+                            print(f"  dropped shot_{index:03d}.png")
+                        continue
+                    capture_requested = key in (" ", "enter")
+
+                if auto:
+                    now = time.monotonic()
+                    capture_requested = now >= next_auto_capture
+                    if capture_requested:
+                        next_auto_capture = now + interval
+
+                if not capture_requested:
+                    if not preview and auto:
+                        time.sleep(
+                            min(0.02, max(0.0, next_auto_capture - time.monotonic()))
+                        )
                     continue
 
-            frame = camera.read_fresh(raw=True)
-            detection = detect_board(frame, board)
-            if not detection.usable():
-                print(f"  rejected: only {detection.count} corners found")
-                continue
+                if not detection.usable():
+                    print(f"  rejected: only {detection.count} corners found")
+                    continue
 
-            cells = coverage_cells(detection.charuco_corners, size)
-            covered |= cells
-            tilt = approximate_tilt_deg(
-                detection.charuco_corners, detection.charuco_ids, board, size
-            )
-            if tilt is not None:
-                tilts.append(tilt)
+                covered |= coverage_cells(detection.charuco_corners, size)
+                if tilt is not None:
+                    tilts.append(tilt)
 
-            path = capture_dir / f"shot_{index:03d}.png"
-            cv2.imwrite(str(path), frame)
-            index += 1
-            tilted = sum(1 for t in tilts if t >= MIN_TILT_DEG)
-            print(
-                f"  saved {path.name}: {detection.count}/{board_corner_count()} corners, "
-                f"tilt~{tilt:.0f} deg" if tilt is not None else f"  saved {path.name}"
-            )
-            print(
-                f"    shots={index}  uncovered regions: {describe_gaps(covered)}  "
-                f"tilted>={MIN_TILT_DEG:.0f}deg: {tilted}/{MIN_TILTED_SHOTS}"
-            )
+                path = capture_dir / f"shot_{index:03d}.png"
+                cv2.imwrite(str(path), frame)
+                index += 1
+                tilted = sum(1 for t in tilts if t >= MIN_TILT_DEG)
+                print(
+                    f"  saved {path.name}: {detection.count}/{board_corner_count()} corners, "
+                    f"tilt~{tilt:.0f} deg" if tilt is not None else f"  saved {path.name}"
+                )
+                print(
+                    f"    shots={index}  uncovered regions: {describe_gaps(covered)}  "
+                    f"tilted>={MIN_TILT_DEG:.0f}deg: {tilted}/{MIN_TILTED_SHOTS}"
+                )
+        finally:
+            if preview_window is not None:
+                preview_window.close()
 
     print(f"\n[info] captured {index} shots into {capture_dir}")
 
@@ -377,9 +509,22 @@ def main() -> int:
         help="capture this many shots automatically instead of prompting",
     )
     parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument(
+        "--no-preview",
+        action="store_true",
+        help="capture through terminal prompts without opening a live window",
+    )
     parser.add_argument("--rms-gate", type=float, default=RMS_GATE_PX)
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
+
+    if not args.solve_only and not args.no_preview and not gui_available():
+        print(
+            "[fail] Matplotlib has no interactive GUI backend.\n"
+            "       Run this command from a desktop session,\n"
+            "       or use --no-preview for terminal-only capture."
+        )
+        return 1
 
     default_spec = DEFAULT_SPECS[args.camera]
     spec = CameraSpec(
@@ -389,6 +534,9 @@ def main() -> int:
         height=args.height or default_spec.height,
         fps=default_spec.fps,
         fourcc=default_spec.fourcc,
+        lock_exposure=default_spec.lock_exposure,
+        lock_white_balance=default_spec.lock_white_balance,
+        target_brightness=default_spec.target_brightness,
     )
     stem = calibration_name(args.camera, spec.width, spec.height)
 
@@ -421,7 +569,7 @@ def main() -> int:
     if not args.solve_only:
         capture_session(
             args.camera, capture_dir, args.auto, args.interval, args.square_mm,
-            spec, wanted_shots,
+            spec, wanted_shots, preview=not args.no_preview,
         )
     return solve(args.camera, capture_dir, args.square_mm, output, args.rms_gate, spec)
 

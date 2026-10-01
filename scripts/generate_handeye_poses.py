@@ -273,6 +273,8 @@ def main() -> None:
         robot.write_joint_state_to_sim(
             joint_tensor, torch.zeros_like(joint_tensor)
         )
+        robot.set_joint_position_target(joint_tensor)
+        robot.write_data_to_sim()
         env.sim.step(render=False)
         env.scene.update(dt=env.physics_dt)
 

@@ -1,0 +1,42 @@
+kind: physical
+offset_deg:
+  shoulder_pan: 0.4953453724165444
+  shoulder_lift: 3.0480401710507166
+  elbow_flex: -10.503010185173132
+  wrist_flex: 2.3346132204052896
+  wrist_roll: 7.9999999999999964
+  gripper: 55.93406593406594
+calibration_ranges:
+  shoulder_pan:
+  - 811
+  - 3277
+  shoulder_lift:
+  - 663
+  - 3191
+  elbow_flex:
+  - 1010
+  - 3164
+  wrist_flex:
+  - 661
+  - 3115
+  wrist_roll:
+  - 0
+  - 4095
+  gripper:
+  - 2029
+  - 3529
+fitted_joints:
+- elbow_flex
+- shoulder_lift
+- shoulder_pan
+- wrist_flex
+- wrist_roll
+note: 'Physical scale; offsets from touch calibration (9 points, /home/keti/workspace/research/so101-team/outputs/touch_calibration/touches_20260930_152245.json):
+  grasp-point error 18.2 -> 5.5 mm. Fitted tip height 17.9 mm. wrist_roll offset +8.00
+  deg from jaw/table-edge alignment (/home/keti/workspace/research/so101-team/outputs/roll_alignment/roll_20260930_155924.json).'
+source:
+  touches: /home/keti/workspace/research/so101-team/outputs/touch_calibration/touches_20260930_152245.json
+  roll_alignment: /home/keti/workspace/research/so101-team/outputs/roll_alignment/roll_20260930_155924.json
+score:
+  mean_error_mm_before: 18.154518844779304
+  mean_error_mm_after: 5.506940582551162

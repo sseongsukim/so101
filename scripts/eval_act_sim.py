@@ -52,10 +52,19 @@ parser.add_argument(
 parser.add_argument("--max-steps", type=int, default=None, help="steps per round (default: the task's episode limit)")
 parser.add_argument("--settle-steps", type=int, default=1, help="hold steps after reset before the policy acts")
 parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--render-randomization", action="store_true",
+                    help="resample the synthetic-data rendering randomization every round")
+parser.add_argument("--image-gain", default="", help="policy-input brightness gain, e.g. front=1.4,wrist=2.3")
+parser.add_argument("--no-backdrop", action="store_true", help="bare scene without the floor/walls")
+parser.add_argument("--env-spacing", type=float, default=30.0)
 parser.add_argument("--video-dir", type=Path, default=None, help="write env 0's front|wrist view per round as mp4")
 parser.add_argument("--out", type=Path, default=None, help="metrics JSON (default: <checkpoint dir>/eval_sim.json)")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+IMAGE_GAIN = {
+    f"observation.images.{name.strip()}": float(value)
+    for name, value in (item.split("=") for item in args_cli.image_gain.split(",") if item.strip())
+}
 if args_cli.num_envs < 1 or args_cli.num_rounds < 1:
     parser.error("--num-envs and --num-rounds must be >= 1")
 args_cli.enable_cameras = True
@@ -68,12 +77,18 @@ import torch  # noqa: E402
 
 import so101.tasks  # noqa: E402,F401  (registers environments)
 from so101.configs import make_env_cfg  # noqa: E402
+from so101.tasks.render_randomization import RenderRandomizer, add_backdrop  # noqa: E402
 from so101.learning.act.data import CAMERA_OBSERVATION_KEYS  # noqa: E402
 from so101.learning.act.inference import ACTRunner  # noqa: E402
 
 
 def _images(observation: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    return {key: observation[obs_key] for key, obs_key in CAMERA_OBSERVATION_KEYS.items()}
+    images = {key: observation[obs_key] for key, obs_key in CAMERA_OBSERVATION_KEYS.items()}
+    # --image-gain: brighten/darken what the policy sees (not the video), to
+    # test sensitivity to camera exposure, e.g. front=1.4,wrist=2.3.
+    for key, gain in IMAGE_GAIN.items():
+        images[key] = (images[key] * gain).clamp(0.0, 1.0)
+    return images
 
 
 def _video_frame(observation: dict[str, torch.Tensor]) -> np.ndarray:
@@ -107,7 +122,15 @@ def main() -> None:
     env_cfg.terminate_on_success = False
     env_cfg.truncate_on_timeout = False
     env_cfg.seed = args_cli.seed
+    # Match the synthetic-data scenes (generate_teacher_demos.py): neighbours
+    # out of the front view, and the backdrop the student has always seen.
+    env_cfg.scene.env_spacing = args_cli.env_spacing
+    env_cfg.scene.wrist_camera.data_types = ["rgb"]
+    env_cfg.scene.external_camera.data_types = ["rgb"]
+    if not args_cli.no_backdrop:
+        add_backdrop(env_cfg.scene)
     env = gym.make(TASK, cfg=env_cfg, render_mode=None)
+    randomizer = None
     unwrapped = env.unwrapped
     max_steps = args_cli.max_steps or unwrapped.max_episode_length
     control_hz = 1.0 / unwrapped.step_dt
@@ -130,6 +153,10 @@ def main() -> None:
     for round_index in range(args_cli.num_rounds):
         with torch.inference_mode():
             observation, _ = env.reset()
+            if args_cli.render_randomization:
+                if randomizer is None:
+                    randomizer = RenderRandomizer(unwrapped, seed=args_cli.seed)
+                randomizer.apply(unwrapped)
             hold = unwrapped.robot.data.default_joint_pos.clone()
             for _ in range(args_cli.settle_steps):
                 observation, *_ = env.step(hold)
@@ -179,6 +206,9 @@ def main() -> None:
     successes = [e for e in episodes if e["success"]]
     metrics = {
         "checkpoint": str(args_cli.checkpoint.resolve()),
+        "render_randomization": args_cli.render_randomization,
+        "image_gain": args_cli.image_gain,
+        "backdrop": not args_cli.no_backdrop,
         "episodes": len(episodes),
         "success_rate": len(successes) / len(episodes),
         "stacked_rate": sum(e["stacked"] for e in episodes) / len(episodes),

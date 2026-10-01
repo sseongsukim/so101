@@ -61,14 +61,14 @@ class ACTPolicy(nn.Module):
                 "params": [
                     p
                     for n, p in self.named_parameters()
-                    if not n.startswith("model.backbone") and p.requires_grad
+                    if not n.startswith(("model.backbone", "model.backbones.")) and p.requires_grad
                 ]
             },
             {
                 "params": [
                     p
                     for n, p in self.named_parameters()
-                    if n.startswith("model.backbone") and p.requires_grad
+                    if n.startswith(("model.backbone", "model.backbones.")) and p.requires_grad
                 ],
                 "lr": self.config.optimizer_lr_backbone,
             },

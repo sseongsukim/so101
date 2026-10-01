@@ -21,6 +21,9 @@ from .materials import spawn_so101_usd_with_color
 
 ASSET_DIR = Path(__file__).resolve().parent
 USD_DIR = ASSET_DIR / "usd"
+# Use the original robot USD plus the local -Y camera-mount override.  The
+# base USD places the camera mesh on +Y; this layer restores the physical
+# wrist-camera side used by the earlier aligned setup.
 SO101_USD_PATH = USD_DIR / "SO-ARM101-USD-RIGHT-CAMERA.usd"
 SO101_CAMERA_USD_PATH = SO101_USD_PATH
 

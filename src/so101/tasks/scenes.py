@@ -10,6 +10,7 @@ from so101.scenes.tabletop import (
     EXTERNAL_CAMERA_POS,
     EXTERNAL_CAMERA_ROT,
     ROBOT_BASE_BOTTOM_Z,
+    ROBOT_ROOT_POS,
     SO101TabletopSceneCfg,
     WRIST_CAMERA_OFFSET_POS,
     WRIST_CAMERA_OFFSET_ROT,
@@ -27,14 +28,16 @@ NEAR_TASK_X = 0.28
 STAGING_X = 0.22
 STAGING_Y = -0.09
 
-STACK_CUBE_DEFAULT_JOINT_POS = {
-    "Rotation": -0.0685,
-    "Pitch": -1.3674,
-    "Elbow": 1.3919,
-    "Wrist_Pitch": 1.0408,
-    "Wrist_Roll": -0.0211,
-    "Jaw": 0.0808,
-}
+# Defined outside Isaac-dependent modules so real-robot code can start from
+# the same pose the simulated episodes (and so the policies) start from.
+from so101.real.constants import STACK_CUBE_DEFAULT_JOINT_POS  # noqa: E402
+
+# Material colors fitted with scripts/match_cube_colors.py so the front camera
+# renders the cubes like the real ones (2026-09-29: small cube olive green,
+# real pixels ~(71, 86, 46); large cube red, ~(167, 43, 61)). Rendering
+# randomization varies appearance around these.
+SMALL_CUBE_COLOR = (0.064, 0.111, 0.011)
+LARGE_CUBE_COLOR = (0.501, 0.011, 0.037)
 
 def jaw_contact_cfg(held_body_name: str | None) -> ContactSensorCfg:
     """Create a jaw sensor filtered to the held cube."""
@@ -60,7 +63,8 @@ class SO101TaskSceneCfg(SO101TabletopSceneCfg):
     robot = SO101_CONTACT_GRASP_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
         init_state=SO101_CONTACT_GRASP_CFG.init_state.replace(
-            joint_pos=STACK_CUBE_DEFAULT_JOINT_POS
+            joint_pos=STACK_CUBE_DEFAULT_JOINT_POS,
+            pos=ROBOT_ROOT_POS,
         ),
     )
 
@@ -76,16 +80,24 @@ class SO101StackCubeSceneCfg(SO101TaskSceneCfg):
         size=LARGE_CUBE_SIZE,
         mass=0.064,
         fixed=False,
-        pos=(NEAR_TASK_X, TASK_Y, ROBOT_BASE_BOTTOM_Z + LARGE_CUBE_SIZE / 2.0),
-        color=(0.15, 0.35, 0.85),
+        pos=(
+            ROBOT_ROOT_POS[0] + NEAR_TASK_X,
+            ROBOT_ROOT_POS[1] + TASK_Y,
+            ROBOT_BASE_BOTTOM_Z + LARGE_CUBE_SIZE / 2.0,
+        ),
+        color=LARGE_CUBE_COLOR,
     )
     held_asset = cube_asset_cfg(
         "{ENV_REGEX_NS}/HeldAsset",
         size=SMALL_CUBE_SIZE,
         mass=0.015625,
         fixed=False,
-        pos=(STAGING_X, STAGING_Y, ROBOT_BASE_BOTTOM_Z + SMALL_CUBE_SIZE / 2.0),
-        color=(0.90, 0.25, 0.12),
+        pos=(
+            ROBOT_ROOT_POS[0] + STAGING_X,
+            ROBOT_ROOT_POS[1] + STAGING_Y,
+            ROBOT_BASE_BOTTOM_Z + SMALL_CUBE_SIZE / 2.0,
+        ),
+        color=SMALL_CUBE_COLOR,
     )
 @configclass
 class SO101VisualStackCubeSceneCfg(SO101StackCubeSceneCfg):
@@ -94,7 +106,8 @@ class SO101VisualStackCubeSceneCfg(SO101StackCubeSceneCfg):
     robot = SO101_CAMERA_CONTACT_GRASP_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
         init_state=SO101_CAMERA_CONTACT_GRASP_CFG.init_state.replace(
-            joint_pos=STACK_CUBE_DEFAULT_JOINT_POS
+            joint_pos=STACK_CUBE_DEFAULT_JOINT_POS,
+            pos=ROBOT_ROOT_POS,
         ),
     )
     wrist_camera = calibrated_camera_cfg(

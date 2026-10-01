@@ -107,21 +107,28 @@ class ACT(nn.Module):
 
         # Backbone for image feature extraction.
         if self.config.has_images:
-            backbone_model = getattr(torchvision.models, config.vision_backbone)(
-                replace_stride_with_dilation=[
-                    False,
-                    False,
-                    config.replace_final_stride_with_dilation,
-                ],
-                weights=config.pretrained_backbone_weights,
-                norm_layer=FrozenBatchNorm2d,
-            )
-            # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final
-            # feature map).
-            # Note: The forward method of this returns a dict: {"feature_map": output}.
-            self.backbone = IntermediateLayerGetter(
-                backbone_model, return_layers={"layer4": "feature_map"}
-            )
+            def make_backbone() -> tuple[nn.Module, nn.Module]:
+                model = getattr(torchvision.models, config.vision_backbone)(
+                    replace_stride_with_dilation=[
+                        False,
+                        False,
+                        config.replace_final_stride_with_dilation,
+                    ],
+                    weights=config.pretrained_backbone_weights,
+                    norm_layer=FrozenBatchNorm2d,
+                )
+                # Keep ACT's spatial feature map and transformer unchanged.
+                return (
+                    IntermediateLayerGetter(model, return_layers={"layer4": "feature_map"}),
+                    model,
+                )
+
+            if config.separate_camera_backbones:
+                pairs = [make_backbone() for _ in config.image_keys]
+                self.backbones = nn.ModuleList(pair[0] for pair in pairs)
+                backbone_model = pairs[0][1]
+            else:
+                self.backbone, backbone_model = make_backbone()
 
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
@@ -285,8 +292,9 @@ class ACT(nn.Module):
             # For a list of images, the H and W may vary but H*W is constant.
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
-            for img in batch[OBS_IMAGES]:
-                cam_features = self.backbone(img)["feature_map"]
+            for index, img in enumerate(batch[OBS_IMAGES]):
+                backbone = self.backbones[index] if self.config.separate_camera_backbones else self.backbone
+                cam_features = backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(
                     dtype=cam_features.dtype
                 )

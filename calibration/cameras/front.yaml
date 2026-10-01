@@ -1,0 +1,27 @@
+name: front
+device: /dev/video6
+resolution: [640, 480]
+fps: 30
+K:
+- [527.1101441573262, 0.0, 320.3616042995824]
+- [0.0, 527.1225992858059, 238.94767106332793]
+- [0.0, 0.0, 1.0]
+dist: [0.04227945620946276, -0.18714633413642515, 0.0, 0.0, 0.2502836022239067]
+K_virtual:
+- [534.2285337652489, 0.0, 320.0]
+- [0.0, 534.2285337652489, 240.0]
+- [0.0, 0.0, 1.0]
+alpha: 0.0
+extrinsic:
+  parent: env
+  convention: ros
+  pos: [0.624449470, 0.702429962, 0.296217571]
+  quat_wxyz: [0.213383576, -0.416053051, -0.726796859, 0.503123876]
+exposure: {}
+calib_rms_px: 0.24647910415054353
+handeye_rmse_px: 0.38595592484573377
+hfov_loss_frac: 0.007456362115303317
+date: '2026-09-21'
+notes: >-
+  Fixed table board centre env=[0.3275, 0.4745, 0.030081] m, long axis world Y.
+  Refreshed from latest_front.png using 28 corners, PnP RMS 0.34 px.

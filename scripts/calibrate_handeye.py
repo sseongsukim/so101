@@ -65,8 +65,11 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import sys
+import threading
+import time
 from pathlib import Path as _Path
 
 sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "src"))
@@ -85,14 +88,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--capture-dir", type=_Path, default=None)
     parser.add_argument("--pose-file", type=_Path, default=None)
     parser.add_argument("--port", default="/dev/so101-follower")
-    parser.add_argument("--robot-id", default="so101_follower")
+    parser.add_argument("--robot-id", default="my_follower")
+    parser.add_argument("--leader-port", default="/dev/so101-leader")
+    parser.add_argument("--leader-id", default="my_leader")
+    parser.add_argument(
+        "--leader-teleop",
+        action="store_true",
+        help="mirror a physical leader arm into the follower during manual capture",
+    )
     parser.add_argument(
         "--square-mm",
         type=float,
         default=None,
         help="measured printed square size, for whichever board --camera "
         "implies (table for wrist, gripper for front); scales the marker "
-        "size with it, correcting for a printer that missed 100% scale",
+        "size with it, correcting for a printer that missed 100%% scale",
     )
     parser.add_argument(
         "--replay",
@@ -101,6 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
         "the operator to place it",
     )
     parser.add_argument("--settle", type=float, default=1.5)
+    parser.add_argument("--force", action="store_true",
+                        help="--solve: write the best solution even when the quality checks fail (verify it visually)")
     parser.add_argument(
         "--via-board",
         action="store_true",
@@ -120,6 +132,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="--via-board: which front intrinsics the frames were taken with, "
         "e.g. front_1280x720. Defaults to matching the image size.",
     )
+    parser.add_argument(
+        "--known-board-center-env",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        default=None,
+        help="--via-board: known geometric centre of the fixed table board in "
+        "the env frame, metres; bypasses the wrist extrinsic",
+    )
+    parser.add_argument(
+        "--known-board-yaw-deg",
+        type=float,
+        default=0.0,
+        help="--via-board: yaw of the table board frame in env degrees",
+    )
     return parser
 
 
@@ -131,11 +158,30 @@ def capture(args) -> int:
     import numpy as np
     import torch
 
+    from so101.charuco import charuco_board, detect_board, gripper_board
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     from so101.real.cameras import DEFAULT_SPECS, Camera
-    from so101.real.constants import SO101_JOINT_ORDER
+    from so101.real.constants import SO101_JOINT_ORDER, SO101_USD_MAPPING
     from so101.real.interface import LeRobotSO101Interface
+
+    # Manual/replay capture needs a live preview with key events: OpenCV's GUI
+    # when this build has one, otherwise a matplotlib window (LeRobot pins the
+    # headless OpenCV wheel). Check before opening serial devices or releasing
+    # torque.
+    from so101.real.preview import PreviewWindow, preview_available
+
+    if not preview_available():
+        capture_dir = args.capture_dir or (DEFAULT_CAPTURE_ROOT / args.camera)
+        print("[fail] no preview possible: headless OpenCV and no DISPLAY.")
+        print("       Run this from the robot PC's desktop session.")
+        print("       No robot command was sent and torque was not changed.")
+        print("       Or use the browser capture tool instead:")
+        print(
+            "       python scripts/web_handeye_capture.py "
+            f"--camera {args.camera} --capture-dir {capture_dir}"
+        )
+        return 1
 
     capture_dir = args.capture_dir or (DEFAULT_CAPTURE_ROOT / args.camera)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -156,6 +202,10 @@ def capture(args) -> int:
             print("aborted")
             return 1
 
+    if args.leader_teleop and args.replay:
+        print("[fail] --leader-teleop cannot be combined with --replay")
+        return 1
+
     interface = LeRobotSO101Interface(
         device="cpu",
         port=args.port,
@@ -166,8 +216,146 @@ def capture(args) -> int:
     )
     interface.init_device()
     interface.connect()
+    leader = None
+    robot_stop = threading.Event()
+    robot_thread = None
+    robot_state_lock = threading.Lock()
+    latest_observation = None
+    robot_error = None
+
+    def cleanup_connections():
+        robot_stop.set()
+        if robot_thread is not None:
+            robot_thread.join(timeout=2.0)
+        try:
+            interface.robot.bus.disable_torque()
+        except Exception:
+            pass
+        try:
+            interface.robot.disconnect()
+        except Exception:
+            pass
+        if leader is not None:
+            try:
+                leader.robot.disconnect()
+            except Exception:
+                pass
+
+    atexit.register(cleanup_connections)
+
+    manual_mode = poses is None
+    if manual_mode and args.leader_teleop:
+        leader = LeRobotSO101Interface(
+            device="cpu",
+            port=args.leader_port,
+            id=args.leader_id,
+            cameras={},
+            fps=30,
+            kind="leader",
+        )
+        leader.init_device()
+        leader.connect()
+
+        interface.robot.bus.enable_torque()
+
+        def robot_io_loop():
+            """Own both serial ports; no other thread may touch robot objects."""
+            nonlocal latest_observation, robot_error
+            control_period = 1.0 / 30.0
+            observation_period = 1.0 / 10.0
+            last_observation_at = 0.0
+            have_observation = False
+            while not robot_stop.is_set():
+                started = time.monotonic()
+                try:
+                    leader_action = leader.robot.get_action()
+                    follower_action = {
+                        joint: float(leader_action[joint])
+                        for joint in SO101_JOINT_ORDER
+                    }
+                    interface.robot.send_action(follower_action)
+                    now = time.monotonic()
+                    if (
+                        not have_observation
+                        or now - last_observation_at >= observation_period
+                    ):
+                        observation = interface.robot.get_observation()
+                        with robot_state_lock:
+                            latest_observation = dict(observation)
+                        last_observation_at = now
+                        have_observation = True
+                except Exception as error:  # noqa: BLE001
+                    robot_error = error
+                    robot_stop.set()
+                    print(f"\n[teleop] stopped: {error}", flush=True)
+                    break
+                remaining = control_period - (time.monotonic() - started)
+                if remaining > 0:
+                    time.sleep(remaining)
+
+        robot_thread = threading.Thread(target=robot_io_loop, daemon=True)
+        robot_thread.start()
+        print(
+            "\n[leader teleop] Move the leader arm; the follower mirrors it. "
+            "Hold the leader still, then press ENTER/SPACE to capture."
+        )
+    elif manual_mode:
+        print(
+            "\n[manual capture] The table board must stay fixed. You will "
+            "hand-guide the arm."
+        )
+        input("Support the arm, then press ENTER to release torque: ")
+        interface.robot.bus.disable_torque()
+        print("Torque OFF. Move the arm while supporting it.")
 
     spec = DEFAULT_SPECS[args.camera]
+    target_board = charuco_board() if args.camera == "wrist" else gripper_board()
+    joint_names = [joint.split(".")[0] for joint in SO101_JOINT_ORDER]
+    joint_limits_deg = np.array(
+        [
+            [SO101_USD_MAPPING[name]["joint_min"], SO101_USD_MAPPING[name]["joint_max"]]
+            for name in joint_names
+        ],
+        dtype=np.float32,
+    )
+
+    def read_joint_status():
+        if args.leader_teleop:
+            with robot_state_lock:
+                observation = None if latest_observation is None else dict(latest_observation)
+            if robot_error is not None:
+                raise ConnectionError(f"leader teleop stopped: {robot_error}")
+            if observation is None:
+                return np.zeros(len(SO101_JOINT_ORDER)), np.zeros(
+                    len(SO101_JOINT_ORDER), dtype=bool
+                )
+        else:
+            observation = interface.robot.get_observation()
+        raw = torch.tensor(
+            [float(observation[joint]) for joint in SO101_JOINT_ORDER],
+            dtype=torch.float32,
+        )
+        radians = interface.get_mapped_actions_vectorized(raw).numpy()
+        degrees = np.degrees(radians)
+        valid = np.logical_and(
+            degrees >= joint_limits_deg[:, 0], degrees <= joint_limits_deg[:, 1]
+        )
+        return degrees, valid
+
+    def draw_joint_status(image, degrees, valid):
+        overall = "SIM JOINTS: OK" if bool(np.all(valid)) else "SIM JOINTS: OUT OF LIMIT"
+        cv2.putText(
+            image, overall, (12, 88), cv2.FONT_HERSHEY_SIMPLEX, 0.58,
+            (0, 255, 0) if np.all(valid) else (0, 0, 255), 2, cv2.LINE_AA,
+        )
+        for index, (name, value, good) in enumerate(zip(joint_names, degrees, valid)):
+            y = 116 + index * 24
+            text = f"{name:<12} {value:+6.1f} deg  [{joint_limits_deg[index, 0]:+.0f},{joint_limits_deg[index, 1]:+.0f}]"
+            cv2.putText(
+                image, text, (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.43,
+                (0, 220, 0) if good else (0, 0, 255), 1, cv2.LINE_AA,
+            )
+
     records: list[dict] = []
     # Raw frames: the target's apparent position must carry the lens
     # distortion that the intrinsic calibration measured, since solvePnP is
@@ -175,7 +363,37 @@ def capture(args) -> int:
     with Camera(spec, calibration=None, rectify=False) as camera:
         print(f"[info] {args.camera} on {spec.device}, exposure "
               f"{camera.exposure_lock.as_dict()}")
+        preview_name = f"hand-eye capture ({args.camera})"
+        window = PreviewWindow(preview_name)
+
+        def wait_for_preview_key(message: str) -> str:
+            """Keep streaming while waiting for Enter or q/Esc."""
+            print(message)
+            while True:
+                live = camera.read_fresh(raw=True)
+                live_detection = detect_board(live, target_board)
+                live_degrees, live_valid = read_joint_status()
+                cv2.putText(
+                    live,
+                    f"ChArUco corners: {live_detection.count}",
+                    (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                    (0, 255, 0) if live_detection.usable() else (0, 180, 255),
+                    2, cv2.LINE_AA,
+                )
+                cv2.putText(
+                    live, message, (12, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                    (255, 255, 255), 2, cv2.LINE_AA,
+                )
+                draw_joint_status(live, live_degrees, live_valid)
+                window.show(live)
+                key = window.poll_key()
+                if key in (10, 13, 32):
+                    return "enter"
+                if key in (ord("q"), ord("Q"), 27):
+                    return "q"
+
         index = 0
+        quit_requested = False
         while True:
             if poses is not None:
                 if index >= len(poses):
@@ -187,23 +405,108 @@ def capture(args) -> int:
                     for joint, value in zip(SO101_JOINT_ORDER, raw.tolist())
                 }
                 interface.robot.send_action(action)
-                import time
-
                 time.sleep(args.settle)
             else:
-                answer = input(
-                    f"[{index}] place the arm, then [Enter] to capture, 'q' to finish: "
-                ).strip()
-                if answer.lower() == "q":
+                # Keep the live view running while the operator positions the
+                # hand-guided arm.  Enter/Space captures; q/Esc finishes.
+                while True:
+                    preview = camera.read_fresh(raw=True)
+                    preview_detection = detect_board(preview, target_board)
+                    preview_degrees, preview_valid = read_joint_status()
+                    shown = preview.copy()
+                    cv2.putText(
+                        shown,
+                        f"{args.camera}  ChArUco corners: {preview_detection.count}",
+                        (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                        (0, 255, 0) if preview_detection.usable() else (0, 180, 255),
+                        2, cv2.LINE_AA,
+                    )
+                    cv2.putText(
+                        shown,
+                        (
+                            "ENTER/SPACE: capture    Q/ESC: finish"
+                            if not args.leader_teleop
+                            else "LEADER: hold pose    ENTER/SPACE: capture    Q/ESC: finish"
+                        ),
+                        (12, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                        (255, 255, 255), 2, cv2.LINE_AA,
+                    )
+                    draw_joint_status(shown, preview_degrees, preview_valid)
+                    window.show(shown)
+                    key = window.poll_key()
+                    if key in (10, 13, 32):
+                        break
+                    if key in (ord("q"), ord("Q"), 27):
+                        quit_requested = True
+                        break
+
+                if quit_requested:
                     break
 
-            observation = interface.robot.get_observation()
+                # Latch the exact hand-guided position before capture.  Write
+                # the goal while torque is still off so enabling torque cannot
+                # recall a stale goal and jump unexpectedly.
+                if not args.leader_teleop:
+                    current = interface.robot.get_observation()
+                    hold = {
+                        joint: float(current[joint]) for joint in SO101_JOINT_ORDER
+                    }
+                    interface.robot.send_action(hold)
+                    interface.robot.bus.enable_torque()
+                    interface.robot.send_action(hold)
+                if args.leader_teleop:
+                    time.sleep(args.settle)
+                else:
+                    time.sleep(args.settle)
+
+            if args.leader_teleop:
+                with robot_state_lock:
+                    observation = (
+                        None if latest_observation is None else dict(latest_observation)
+                    )
+                if robot_error is not None:
+                    raise ConnectionError(f"leader teleop stopped: {robot_error}")
+                if observation is None:
+                    raise RuntimeError("leader teleop has not produced a follower observation yet")
+            else:
+                observation = interface.robot.get_observation()
             raw_values = torch.tensor(
                 [float(observation[joint]) for joint in SO101_JOINT_ORDER],
                 dtype=torch.float32,
             )
             radians = interface.get_mapped_actions_vectorized(raw_values)
+            degrees = np.degrees(radians.numpy())
+            valid = np.logical_and(
+                degrees >= joint_limits_deg[:, 0], degrees <= joint_limits_deg[:, 1]
+            )
+            if not np.all(valid):
+                bad = ", ".join(
+                    f"{joint_names[i]}={degrees[i]:.1f}deg"
+                    for i in range(len(joint_names)) if not valid[i]
+                )
+                print(f"  NOT saved: outside Isaac joint limits ({bad})")
+                if manual_mode and not args.leader_teleop:
+                    interface.robot.bus.disable_torque()
+                    print("Torque OFF. Move to a pose within the displayed limits.")
+                    continue
             frame = camera.read_fresh(raw=True)
+            detection = detect_board(frame, target_board)
+            if manual_mode and not detection.usable():
+                print(
+                    f"  NOT saved: only {detection.count} ChArUco corners detected. "
+                    "Reposition so the fixed board is visible."
+                )
+                answer = wait_for_preview_key(
+                    "ENTER/SPACE: release torque and retry    Q/ESC: finish"
+                )
+                if not args.leader_teleop:
+                    interface.robot.bus.disable_torque()
+                if answer == "q":
+                    quit_requested = True
+                    break
+                if not args.leader_teleop:
+                    print("Torque OFF. Move the arm to a visible pose.")
+                continue
 
             image_path = capture_dir / f"pose_{index:03d}.png"
             cv2.imwrite(str(image_path), frame)
@@ -215,11 +518,28 @@ def capture(args) -> int:
                     "raw_values": [float(v) for v in raw_values.tolist()],
                 }
             )
-            print(f"  captured {image_path.name}  joints(rad)="
+            print(f"  captured {image_path.name}  corners={detection.count}  joints(rad)="
                   f"{np.round(radians.numpy(), 4).tolist()}")
             index += 1
 
-    interface.robot.disconnect()
+            if manual_mode:
+                answer = wait_for_preview_key(
+                    (
+                        "ENTER/SPACE: release torque and move next    Q/ESC: finish"
+                        if not args.leader_teleop
+                        else "LEADER: move to next pose    ENTER/SPACE: capture    Q/ESC: finish"
+                    )
+                )
+                if not args.leader_teleop:
+                    interface.robot.bus.disable_torque()
+                if answer == "q":
+                    break
+                if not args.leader_teleop:
+                    print("Torque OFF. Move the arm to the next pose.")
+
+    window.close()
+    cleanup_connections()
+    atexit.unregister(cleanup_connections)
     record_path = capture_dir / "records.json"
     record_path.write_text(
         json.dumps({"camera": args.camera, "records": records}, indent=2),
@@ -229,6 +549,25 @@ def capture(args) -> int:
     if len(records) < 8:
         print("[warn] fewer than 8 poses; the solve will be poorly conditioned")
     return 0
+
+
+def _record_joints(record, mapping, device):
+    """Isaac joints for one capture record, (1, 6) on `device`.
+
+    Recomputed from the follower's raw readings with the mapping in force now
+    (so101.real.joint_mapping.follower_mapping) rather than taken from the
+    radians stored at capture time, so adopting a fitted joint mapping
+    re-solves the cameras against the kinematics the policy will actually
+    run with. Records without raw_values fall back to the stored radians.
+    """
+    import torch
+
+    if "raw_values" in record:
+        raw = torch.tensor(record["raw_values"], dtype=torch.float32)
+        joints = mapping.to_sim(raw)
+    else:
+        joints = torch.tensor(record["joint_positions_rad"], dtype=torch.float32)
+    return joints.to(device).unsqueeze(0)
 
 
 def _target_pose_in_camera(frame, calibration, board):
@@ -307,13 +646,21 @@ def _board_pose_in_env(args, board):
         raise SystemExit(f"no wrist capture at {record_path}")
     records = json.loads(record_path.read_text())["records"]
 
-    cfg = make_env_cfg("so101-visual-StackCube-v0", num_envs=1, device=args.device)
-    env = gym.make("so101-visual-StackCube-v0", cfg=cfg).unwrapped
+    # Hand-eye solving only needs the robot articulation for forward
+    # kinematics.  Use the non-visual task so Isaac does not spawn camera
+    # sensors while AppLauncher deliberately runs with cameras disabled.
+    cfg = make_env_cfg("so101-StackCube-v0", num_envs=1, device=args.device)
+    env = gym.make("so101-StackCube-v0", cfg=cfg).unwrapped
     env.reset()
     robot = env.scene["robot"]
     device = robot.data.joint_pos.device
     env_origin = env.scene.env_origins[0].cpu().numpy()
     gripper_index = list(robot.data.body_names).index("gripper")
+    # The joint readings are the follower's (web and leader-driven captures
+    # alike), so they go through the follower mapping.
+    from so101.real.joint_mapping import follower_mapping
+
+    mapping = follower_mapping(args.robot_id)
     gripper_camera = wrist.extrinsic.matrix
 
     poses = []
@@ -334,10 +681,10 @@ def _board_pose_in_env(args, board):
         rotation, _ = cv2.Rodrigues(rvec)
         camera_board = pose_matrix(rotation, tvec)
 
-        joints = torch.tensor(
-            record["joint_positions_rad"], dtype=torch.float32, device=device
-        ).unsqueeze(0)
+        joints = _record_joints(record, mapping, device)
         robot.write_joint_state_to_sim(joints, torch.zeros_like(joints))
+        robot.set_joint_position_target(joints)
+        robot.write_data_to_sim()
         env.sim.step(render=False)
         env.scene.update(dt=env.physics_dt)
         env_gripper = pose_matrix(
@@ -401,10 +748,44 @@ def _solve_via_board(args) -> int:
     square_mm = args.square_mm
     board = charuco_board(square_mm) if square_mm else charuco_board()
 
-    env_board, board_scatter_mm, board_spread_deg, used = _board_pose_in_env(args, board)
+    if args.known_board_center_env is not None:
+        # PnP uses the ChArUco board's outer upper-left corner as its frame
+        # origin.  The user supplies the geometric centre of the printed
+        # rectangle, so convert that centre to the board-frame origin.
+        from so101.charuco import load_board_spec
+
+        spec = load_board_spec()
+        centre = np.asarray(args.known_board_center_env, dtype=np.float64)
+        yaw = np.deg2rad(float(args.known_board_yaw_deg))
+        cy, sy = np.cos(yaw), np.sin(yaw)
+        # OpenCV's board frame has +x across the board, +y down the printed
+        # face, and +z away from that face.  A board lying face-up on the
+        # tabletop therefore maps to Rx(pi) before applying its in-plane yaw.
+        board_rotation = np.array(
+            [[cy, sy, 0.0], [sy, -cy, 0.0], [0.0, 0.0, -1.0]],
+            dtype=np.float64,
+        )
+        centre_offset = np.array(
+            [spec.width_mm / 2000.0, spec.height_mm / 2000.0, 0.0],
+            dtype=np.float64,
+        )
+        board_origin = centre - board_rotation @ centre_offset
+        env_board = pose_matrix(board_rotation, board_origin)
+        board_scatter_mm = 0.0
+        board_spread_deg = 0.0
+        used = 0
+        print("[info] using known table-board centre; wrist extrinsic bypassed")
+        print(f"[info] board centre env: {np.round(centre, 6).tolist()} m")
+        print(f"[info] board origin env: {np.round(board_origin, 6).tolist()} m")
+    else:
+        env_board, board_scatter_mm, board_spread_deg, used = _board_pose_in_env(args, board)
 
     print("\n" + "=" * 68)
-    print("SHARED BOARD: front camera from the wrist camera's view of the table")
+    print(
+        "KNOWN BOARD: front camera from fixed table-board position"
+        if args.known_board_center_env is not None
+        else "SHARED BOARD: front camera from the wrist camera's view of the table"
+    )
     print("=" * 68)
     print(f"  wrist frames that localised the board : {used}")
     print(f"  board position scatter                : {board_scatter_mm:.2f} mm")
@@ -415,6 +796,7 @@ def _solve_via_board(args) -> int:
         print("  through -- fix it before trusting anything derived from it.")
 
     solutions = []
+    reprojection_squared_errors = []
     for path in args.front_image:
         frame = cv2.imread(str(path))
         if frame is None:
@@ -435,6 +817,15 @@ def _solve_via_board(args) -> int:
         rotation, _ = cv2.Rodrigues(rvec)
         camera_board = pose_matrix(rotation, tvec)
         solutions.append(camera_pose_from_board(env_board, camera_board))
+        projected, _ = cv2.projectPoints(
+            object_points, rvec, tvec, front.camera_matrix, front.distortion
+        )
+        reprojection_squared_errors.extend(
+            np.sum(
+                (projected.reshape(-1, 2) - image_points) ** 2,
+                axis=1,
+            ).tolist()
+        )
         print(f"  {path.name}: {detection.count} corners")
 
     if not solutions:
@@ -447,12 +838,18 @@ def _solve_via_board(args) -> int:
     print(f"  position across frames    : {scatter_mm:.2f} mm scatter")
     print(f"  orientation across frames : {spread_deg:.2f} deg spread")
     print(f"  camera position (env)     : {np.round(best[:3, 3], 4).tolist()} m")
-    print(
-        "\n  Note: this pose inherits the wrist hand-eye error on top of two PnP "
-        "solves,\n  so expect it to be roughly twice as uncertain as a direct "
-        "eye-to-hand result.\n  The alignment gate is what decides whether that is "
-        "good enough."
-    )
+    if args.known_board_center_env is not None:
+        print(
+            "\n  Note: this pose uses the measured board position directly and "
+            "does not depend on the wrist extrinsic."
+        )
+    else:
+        print(
+            "\n  Note: this pose inherits the wrist hand-eye error on top of two PnP "
+            "solves,\n  so expect it to be roughly twice as uncertain as a direct "
+            "eye-to-hand result.\n  The alignment gate is what decides whether that is "
+            "good enough."
+        )
 
     # The pose goes on the record the task actually runs with.  A camera's
     # position is a physical fact, so one measured from higher-resolution
@@ -467,10 +864,15 @@ def _solve_via_board(args) -> int:
         pos=tuple(float(v) for v in best[:3, 3]),
         quat_wxyz=matrix_to_quat_wxyz(best[:3, :3]),
     )
-    target.notes = (target.notes + " | " if target.notes else "") + (
-        f"shared board via wrist, {used} wrist frames, {len(solutions)} front "
-        f"frames from {stem}, board scatter {board_scatter_mm:.2f} mm"
-    )
+    target.handeye_rmse_px = float(np.sqrt(np.mean(reprojection_squared_errors)))
+    if args.known_board_center_env is not None:
+        target.notes = (
+            f"known fixed table board centre env="
+            f"{np.round(args.known_board_center_env, 6).tolist()} m, "
+            f"yaw={args.known_board_yaw_deg:.1f} deg, {len(solutions)} front frames "
+            f"from {stem}, pose scatter {scatter_mm:.2f} mm, "
+            f"orientation spread {spread_deg:.2f} deg"
+        )
     output = calibration_path("front")
     target.save(output)
     print(f"  wrote extrinsic (parent=env, convention=ros) -> {output}")
@@ -516,13 +918,21 @@ def _solve_inner(args) -> int:
     else:
         board = gripper_board(args.square_mm) if args.square_mm else gripper_board()
 
-    cfg = make_env_cfg("so101-visual-StackCube-v0", num_envs=1, device=args.device)
-    env = gym.make("so101-visual-StackCube-v0", cfg=cfg).unwrapped
+    # Hand-eye solving only needs the robot articulation for forward
+    # kinematics.  Use the non-visual task so Isaac does not spawn camera
+    # sensors while AppLauncher deliberately runs with cameras disabled.
+    cfg = make_env_cfg("so101-StackCube-v0", num_envs=1, device=args.device)
+    env = gym.make("so101-StackCube-v0", cfg=cfg).unwrapped
     env.reset()
     robot = env.scene["robot"]
     device = robot.data.joint_pos.device
     env_origin = env.scene.env_origins[0].cpu().numpy()
     gripper_index = list(robot.data.body_names).index("gripper")
+    # The joint readings are the follower's (web and leader-driven captures
+    # alike), so they go through the follower mapping.
+    from so101.real.joint_mapping import follower_mapping
+
+    mapping = follower_mapping(args.robot_id)
 
     gripper_poses: list[np.ndarray] = []
     target_poses: list[np.ndarray] = []
@@ -541,10 +951,10 @@ def _solve_inner(args) -> int:
             continue
         target_pose, object_points, image_points = result
 
-        joints = torch.tensor(
-            record["joint_positions_rad"], dtype=torch.float32, device=device
-        ).unsqueeze(0)
+        joints = _record_joints(record, mapping, device)
         robot.write_joint_state_to_sim(joints, torch.zeros_like(joints))
+        robot.set_joint_position_target(joints)
+        robot.write_data_to_sim()
         env.sim.step(render=False)
         env.scene.update(dt=env.physics_dt)
 
@@ -605,6 +1015,31 @@ def _solve_inner(args) -> int:
     best, rmse, best_name = chosen.transform, chosen.reprojection_rmse_px, chosen.method
     print(f"\n  best by reprojection: {best_name}  ({rmse:.2f} px)")
 
+    # A returned transform is not necessarily a valid calibration.  Badly
+    # paired FK/image samples still produce plausible quaternions, so preserve
+    # the last known pose unless independent quality signals agree.
+    failures = []
+    if spread_mm > 10.0:
+        failures.append(f"inter-solver position spread {spread_mm:.2f} mm > 10 mm")
+    if spread_deg > 5.0:
+        failures.append(f"inter-solver rotation spread {spread_deg:.2f} deg > 5 deg")
+    if chosen.rig_scatter_mm > 10.0:
+        failures.append(
+            f"rig position scatter {chosen.rig_scatter_mm:.2f} mm > 10 mm"
+        )
+    if rmse > 5.0:
+        failures.append(f"reprojection RMSE {rmse:.2f} px > 5 px")
+    if failures and not getattr(args, "force", False):
+        print("\n[fail] refusing to overwrite the calibration:")
+        for failure in failures:
+            print(f"  - {failure}")
+        print("  Recapture after checking joint readback, target rigidity, and pose diversity.")
+        return 1
+    if failures:
+        print("\n[warn] --force: writing despite:")
+        for failure in failures:
+            print(f"  - {failure}")
+
     parent = "gripper" if eye_in_hand else "env"
     calibration.extrinsic = CameraExtrinsic(
         parent=parent,
@@ -642,10 +1077,15 @@ def solve(args) -> int:
 
 
 def main() -> int:
-    from isaaclab.app import AppLauncher
-
     parser = build_parser()
-    AppLauncher.add_app_launcher_args(parser)
+    # Real capture has no Isaac dependency and runs in the lightweight
+    # hardware environment.  Only add Isaac's launcher arguments for solve;
+    # importing AppLauncher unconditionally made `--capture` fail before it
+    # could even open the robot in that environment.
+    if "--solve" in sys.argv:
+        from isaaclab.app import AppLauncher
+
+        AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
     if args.capture == args.solve:
         print("[fail] choose exactly one of --capture or --solve")

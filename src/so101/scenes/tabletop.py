@@ -15,13 +15,18 @@ from so101.camera_calibration import DEFAULT_CALIBRATION_DIR, try_load_calibrati
 
 logger = logging.getLogger(__name__)
 
-TABLETOP_LENGTH = 0.50
-TABLETOP_WIDTH = 0.50
+# The physical table is 70 cm deep along X and 120 cm wide along Y.
+TABLETOP_LENGTH = 0.70
+TABLETOP_WIDTH = 1.20
 TABLETOP_THICKNESS = 0.04
 # The SO-101 USD root is at z=0, while the lowest point of its base mesh is
 # 30.081 mm above that origin.  Put the tabletop surface at the mesh bottom so
 # the robot is visually and physically supported without moving its root pose.
 ROBOT_BASE_BOTTOM_Z = 0.0300814467
+# Root placement used by the calibrated physical layout.  The base-frame
+# centre is then at approximately (0.0, 0.4175) m because the USD base has an
+# internal XY offset.
+ROBOT_ROOT_POS = (0.0377, 0.3967, 0.0)
 
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
@@ -36,8 +41,9 @@ CAMERA_HEIGHT = 480
 # calibrated.  They are the historical hand-picked poses, converted from the
 # OpenGL convention they used to be written in, so the fallback renders exactly
 # as it always did.  calibration/cameras/*.yaml overrides them.
+# Previous local wrist-camera setup: original USD mount and 180-degree roll.
 WRIST_CAMERA_OFFSET_POS = (-0.005, -0.060, -0.062)
-WRIST_CAMERA_OFFSET_ROT = (0.3826834, -0.9238795, 0.0, 0.0)
+WRIST_CAMERA_OFFSET_ROT = (0.0, 0.0, 0.9238795, 0.3826834)
 EXTERNAL_CAMERA_POS = (0.62, -0.50, 0.42)
 EXTERNAL_CAMERA_ROT = (0.4737144, -0.8254465, -0.2662452, 0.1527951)
 
@@ -125,9 +131,8 @@ class SO101TabletopSceneCfg(InteractiveSceneCfg):
     """Robot at the origin, mounted on the midpoint of a tabletop edge.
 
     The tabletop's top surface touches the bottom of the robot base mesh at
-    z=0.030081 m. It extends forward along +X, so its bounds are x=[0.0, 0.5]
-    and y=[-0.25, 0.25]. Omitting rigid-body properties makes it a static
-    collider: it cannot fall or move.
+    z=0.030081 m. It spans x=[0.0, 0.7] and y=[0.0, 1.2]. Omitting rigid-body
+    properties makes it a static collider: it cannot fall or move.
     """
 
     tabletop = AssetBaseCfg(
@@ -146,7 +151,7 @@ class SO101TabletopSceneCfg(InteractiveSceneCfg):
         init_state=AssetBaseCfg.InitialStateCfg(
             pos=(
                 TABLETOP_LENGTH / 2.0,
-                0.0,
+                TABLETOP_WIDTH / 2.0,
                 ROBOT_BASE_BOTTOM_Z - TABLETOP_THICKNESS / 2.0,
             ),
         ),
