@@ -2,12 +2,13 @@
 
 The robot root is placed at the final physical layout used for calibration,
 then both simulated cameras are rendered from exactly the same robot pose.
-Press ``q`` in either image window or Ctrl+C in the terminal to stop.
+Close Isaac or press Ctrl+C in the terminal to stop.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -41,6 +42,12 @@ def main() -> int:
         help="joint radians in Rotation Pitch Elbow Wrist_Pitch Wrist_Roll Jaw order",
     )
     parser.add_argument("--seconds", type=float, default=120.0)
+    parser.add_argument("--pose-file", type=Path, help="portfolio_capture real-pose pose.json; use measured joints")
+    parser.add_argument("--clean-board", action="store_true", help="hide measurement markers, retain the board")
+    parser.add_argument("--render-dr", action="store_true", help="save nominal frames then one matched rendering-DR draw")
+    parser.add_argument("--seed", type=int, default=20261006)
+    parser.add_argument("--wrist-pos-jitter-m", type=float, default=0.01)
+    parser.add_argument("--wrist-rot-jitter-deg", type=float, default=3.0)
     parser.add_argument(
         "--out",
         type=Path,
@@ -54,7 +61,10 @@ def main() -> int:
     )
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
-    args.headless = False
+    if args.pose_file:
+        args.pose = json.loads(args.pose_file.read_text())["joints_rad"]
+        if len(args.pose) != 6 or not np.isfinite(args.pose).all():
+            parser.error("pose-file joints_rad must contain six finite radians")
     args.enable_cameras = True
 
     app_launcher = AppLauncher(args)
@@ -75,10 +85,16 @@ def main() -> int:
     # base centre is brought there by placing the articulation root at y=0.3967.
     cfg = make_env_cfg("so101-visual-StackCube-v0", num_envs=1, device=args.device)
     cfg.scene.robot.init_state.pos = ROBOT_ROOT_POS
+    cfg.viewer.eye = (0.85, -0.55, 0.65)
+    cfg.viewer.lookat = (0.24, 0.42, 0.13)
+    if args.render_dr:
+        from so101.tasks.render_randomization import add_backdrop
+
+        add_backdrop(cfg.scene)
     env = gym.make("so101-visual-StackCube-v0", cfg=cfg).unwrapped
 
     try:
-        env.reset()
+        env.reset(seed=args.seed)
         robot = env.scene["robot"]
         pose = torch.tensor(args.pose, dtype=torch.float32, device=robot.device).unsqueeze(0)
         if len(robot.data.joint_names) != 6:
@@ -126,6 +142,7 @@ def main() -> int:
             from pxr import Gf, Sdf, UsdGeom, UsdShade
 
             stage = omni.usd.get_context().get_stage()
+            UsdGeom.Xform.Define(stage, "/World/CalibrationMarkers")
             base_center = np.array(
                 [BASE_FRAME_X, BASE_FRAME_Y, ROBOT_BASE_BOTTOM_Z + 0.002],
                 dtype=float,
@@ -199,6 +216,8 @@ def main() -> int:
                 f"(+{BOARD_OFFSET_X * 1000:.1f}, +{BOARD_OFFSET_Y * 1000:.1f}) mm"
             )
             print("markers: yellow=base frame, magenta=board centre, RGB=+X/+Y/+Z")
+            if args.clean_board:
+                UsdGeom.Imageable(stage.GetPrimAtPath("/World/CalibrationMarkers")).MakeInvisible()
 
         # Let the articulation and both sensors settle at the requested pose.
         for _ in range(30):
@@ -207,7 +226,7 @@ def main() -> int:
 
         args.out.mkdir(parents=True, exist_ok=True)
 
-        def save_sensor_frames() -> None:
+        def save_sensor_frames(prefix="latest") -> None:
             """Save sensor pixels without viewport panel scaling or cropping."""
             for name, sensor_name in (
                 ("front", "external_camera"),
@@ -215,8 +234,31 @@ def main() -> int:
             ):
                 rgb = env.scene[sensor_name].data.output["rgb"][0].cpu().numpy()
                 bgr = cv2.cvtColor(rgb.astype(np.uint8), cv2.COLOR_RGB2BGR)
-                cv2.imwrite(str(args.out / f"latest_{name}.png"), bgr)
+                if not cv2.imwrite(str(args.out / f"{prefix}_{name}.png"), bgr):
+                    raise RuntimeError(f"could not save {prefix}_{name}.png")
 
+        save_sensor_frames("nominal")
+        dr_draw = None
+        if args.render_dr:
+            from so101.tasks.render_randomization import RenderRandomizationCfg, RenderRandomizer
+
+            dr_cfg = RenderRandomizationCfg(
+                wrist_pos_jitter_m=args.wrist_pos_jitter_m,
+                wrist_rot_jitter_deg=args.wrist_rot_jitter_deg,
+            )
+            randomizer = RenderRandomizer(env, dr_cfg, seed=args.seed)
+            dr_draw = randomizer.apply(env)
+            for _ in range(5):
+                env.sim.step(render=True)
+                env.scene.update(dt=env.physics_dt)
+            save_sensor_frames("dr")
+        (args.out / "capture_metadata.json").write_text(json.dumps({
+            "joints_rad": args.pose, "pose_file": str(args.pose_file) if args.pose_file else None,
+            "seed": args.seed, "board": not args.no_board, "render_dr": args.render_dr,
+            "wrist_pos_jitter_m": args.wrist_pos_jitter_m if args.render_dr else None,
+            "wrist_rot_jitter_deg": args.wrist_rot_jitter_deg if args.render_dr else None,
+            "dr_draw": dr_draw,
+        }, indent=2, default=lambda value: value.tolist() if hasattr(value, "tolist") else str(value)))
         save_sensor_frames()
 
         print("\n=== SIM CAMERA STREAM ===")
@@ -224,29 +266,23 @@ def main() -> int:
         print(f"robot root: {ROBOT_ROOT_POS} m")
         print("front and wrist camera windows show the same simulated robot pose")
         print(f"exact 640x480 sensor frames: {args.out}")
-        print("press q in either window or Ctrl+C to stop")
+        print("close Isaac or press Ctrl+C to stop")
 
-        from omni.kit.viewport.utility import create_viewport_window
-        from pxr import Sdf
+        viewports = []
+        if not args.headless:
+            from omni.kit.viewport.utility import create_viewport_window
+            from pxr import Sdf
 
-        front_viewport = create_viewport_window(
-            "SIM FRONT CAMERA",
-            width=640,
-            height=480,
-            position_x=20,
-            position_y=60,
-            camera_path=Sdf.Path("/World/envs/env_0/ExternalCamera"),
-        )
-        wrist_viewport = create_viewport_window(
-            "SIM WRIST CAMERA",
-            width=640,
-            height=480,
-            position_x=680,
-            position_y=60,
-            camera_path=Sdf.Path("/World/envs/env_0/Robot/gripper/gripper_cam"),
-        )
-        if front_viewport is None or wrist_viewport is None:
-            raise RuntimeError("Isaac viewport creation failed")
+            for i, (name, path) in enumerate((
+                ("FRONT", "/World/envs/env_0/ExternalCamera"),
+                ("WRIST", "/World/envs/env_0/Robot/gripper/gripper_cam"),
+            )):
+                viewports.append(create_viewport_window(
+                    f"SIM {name} CAMERA", width=640, height=480,
+                    position_x=20 + 660 * i, position_y=60, camera_path=Sdf.Path(path),
+                ))
+            if any(viewport is None for viewport in viewports):
+                raise RuntimeError("Isaac viewport creation failed")
 
         deadline = time.monotonic() + args.seconds
         next_save = time.monotonic() + 0.5
