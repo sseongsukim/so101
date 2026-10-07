@@ -64,6 +64,11 @@ parser.add_argument("--no-backdrop", action="store_true", help="bare scene witho
 parser.add_argument("--env-spacing", type=float, default=30.0)
 parser.add_argument("--video-dir", type=Path, default=None, help="write env 0's front|wrist view per round as mp4")
 parser.add_argument("--out", type=Path, default=None, help="metrics JSON (default: <checkpoint dir>/eval_sim.json)")
+parser.add_argument("--small", type=float, nargs=3, metavar=("X_CM", "Y_CM", "YAW_DEG"),
+                    help="optional fixed small-cube centre, yellow-base frame")
+parser.add_argument("--large", type=float, nargs=3, metavar=("X_CM", "Y_CM", "YAW_DEG"),
+                    help="optional fixed large-cube centre, yellow-base frame; requires --small")
+parser.add_argument("--realtime", action="store_true", help="pace the visible demo at simulation control frequency")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 IMAGE_GAIN = {
@@ -72,6 +77,8 @@ IMAGE_GAIN = {
 }
 if args_cli.num_envs < 1 or args_cli.num_rounds < 1:
     parser.error("--num-envs and --num-rounds must be >= 1")
+if (args_cli.small is None) != (args_cli.large is None):
+    parser.error("--small and --large must be supplied together")
 args_cli.enable_cameras = True
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -127,6 +134,9 @@ def main() -> None:
     env_cfg.terminate_on_success = False
     env_cfg.truncate_on_timeout = False
     env_cfg.seed = args_cli.seed
+    if args_cli.realtime:
+        env_cfg.viewer.eye = (0.85, -0.55, 0.65)
+        env_cfg.viewer.lookat = (0.24, 0.42, 0.13)
     # Match the synthetic-data scenes (generate_teacher_demos.py): neighbours
     # out of the front view, and the backdrop the student has always seen.
     env_cfg.scene.env_spacing = args_cli.env_spacing
@@ -160,6 +170,10 @@ def main() -> None:
     for round_index in range(args_cli.num_rounds):
         with torch.inference_mode():
             observation, _ = env.reset()
+            if args_cli.small is not None:
+                from fixed_layout_check import layout_world, place_cubes
+
+                place_cubes(unwrapped, layout_world(args_cli))
             if args_cli.render_randomization:
                 if randomizer is None:
                     randomizer = RenderRandomizer(unwrapped, seed=args_cli.seed)
@@ -188,6 +202,8 @@ def main() -> None:
             success_step[step_success & ~success] = step + 1
             success |= step_success
             stacked |= info["stacked"].cpu().numpy().astype(bool)
+            if args_cli.realtime:
+                time.sleep(max(0.0, unwrapped.step_dt - (time.perf_counter() - started)))
             if success.all():
                 break
 
@@ -213,6 +229,10 @@ def main() -> None:
     successes = [e for e in episodes if e["success"]]
     metrics = {
         "checkpoint": str(args_cli.checkpoint.resolve()),
+        "seed": args_cli.seed,
+        "max_steps": max_steps,
+        "fixed_layout_cm": {"small": args_cli.small, "large": args_cli.large}
+        if args_cli.small is not None else None,
         "render_randomization": args_cli.render_randomization,
         "image_gain": args_cli.image_gain,
         "backdrop": not args_cli.no_backdrop,

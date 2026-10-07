@@ -105,6 +105,8 @@ def train(
     ema: bool | None = None,
     amp: bool = False,
     overrides: dict | None = None,
+    episode_selection: dict[str, list[str]] | None = None,
+    source_fractions: dict[str, float] | None = None,
 ) -> Path:
     """Train DP on one or more pickle directories; returns the final checkpoint path.
     Importable so tests don't need to shell out."""
@@ -148,8 +150,35 @@ def train(
         )
 
     # --- data ----------------------------------------------------------------
-    train_eps, val_eps = split_episodes(sources, val_fraction, seed)
+    if episode_selection is not None:
+        if val_fraction:
+            raise ValueError("--episode-selection cannot be combined with --val-fraction")
+        train_eps, val_eps = [], []
+        for source in sources:
+            if source.name not in episode_selection:
+                raise ValueError(f"episode selection missing source {source.name!r}")
+            names = source.manifest["episodes"]
+            wanted = set(episode_selection[source.name])
+            missing = wanted.difference(names)
+            if missing:
+                raise ValueError(f"{source.name}: selected episodes absent from cache: {sorted(missing)[:3]}")
+            chosen = np.asarray([i for i, name in enumerate(names) if name in wanted], dtype=np.int64)
+            if len(chosen) != len(wanted):
+                raise ValueError(f"{source.name}: duplicate episode names in selection")
+            train_eps.append(chosen)
+            val_eps.append(np.zeros(0, dtype=np.int64))
+    else:
+        train_eps, val_eps = split_episodes(sources, val_fraction, seed)
     dataset = DPDataset(sources, config, episodes=train_eps, min_length=min_length)
+    if source_fractions is not None:
+        if set(source_fractions) != {s.name for s in sources}:
+            raise ValueError(f"source fraction names must be {[s.name for s in sources]}")
+        if any(v <= 0 for v in source_fractions.values()) or not np.isclose(sum(source_fractions.values()), 1.0):
+            raise ValueError("source fractions must be positive and sum to 1")
+        for i, source in enumerate(sources):
+            if dataset.num_samples[i] == 0:
+                raise ValueError(f"source {source.name} has no usable samples")
+            source.weight = source_fractions[source.name] / dataset.num_samples[i]
     val_dataset = None
     if any(len(v) for v in val_eps):
         val_dataset = DPDataset([s for s, v in zip(sources, val_eps) if len(v)], config,
@@ -197,6 +226,8 @@ def train(
         "steps": steps,
         "init_from": str(init_from) if init_from is not None else None,
         "amp": amp,
+        "episode_selection": episode_selection,
+        "source_fractions": source_fractions,
         "config": config.to_dict(),
     }
     (out_dir / "train_info.json").write_text(json.dumps(info, indent=2))
@@ -361,6 +392,8 @@ def main() -> None:
     ap.add_argument("--val-freq", type=int, default=1000)
     ap.add_argument("--ema", action="store_true", default=None, help="track EMA weights (training.yaml ema, off by default)")
     ap.add_argument("--amp", action="store_true", help="fp16 autocast + GradScaler (paper: mixed_precision false)")
+    ap.add_argument("--episode-selection", default=None, help="JSON mapping source names to selected trajectory filenames")
+    ap.add_argument("--source-fractions", default=None, help="fixed sample fractions, e.g. sim=0.8,real=0.2")
     ap.add_argument("--set", action="append", metavar="KEY=VALUE", help="override any DPConfig field, e.g. --set encoder_lr=3e-5")
     args = ap.parse_args()
 
@@ -385,6 +418,8 @@ def main() -> None:
         ema=args.ema,
         amp=args.amp,
         overrides=_parse_overrides(args.set),
+        episode_selection=json.loads(Path(args.episode_selection).read_text()) if args.episode_selection else None,
+        source_fractions={k: float(v) for k, v in (item.split("=", 1) for item in args.source_fractions.split(","))} if args.source_fractions else None,
     )
 
 
