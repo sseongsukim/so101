@@ -80,7 +80,7 @@ DEFAULT_SPECS: dict[str, CameraSpec] = {
     # Colour balance stays automatic for the reason above.
     "wrist": CameraSpec(
         name="wrist",
-        device="/dev/video0",
+        device="/dev/v4l/by-id/usb-Innomaker_Innomaker-U20CAM-720P_SN0001-video-index0",
         fourcc="MJPG",
         lock_exposure=True,
         lock_white_balance=False,
@@ -96,7 +96,11 @@ DEFAULT_SPECS: dict[str, CameraSpec] = {
     # exposure. 6187 is what metering chose with the cubes on the table, the
     # frame the simulated cube colors were fitted to (match_cube_colors.py).
     # Re-measure if the room lighting changes a lot.
-    "front": CameraSpec(name="front", device="/dev/video6", exposure=6187),
+    "front": CameraSpec(
+        name="front",
+        device="/dev/v4l/by-id/usb-Orbbec_R__Orbbec_R__Gemini_TM__AY6G65301C0-video-index0",
+        exposure=6187,
+    ),
 }
 
 
