@@ -98,6 +98,18 @@ class ResnetEncoder(nn.Module):
         x = (x - self.mean) / self.std
         return self.model(x)
 
+    def forward_spatial(self, x: Tensor) -> Tensor:
+        """Final ResNet map before average pooling, with identical RGB normalization.
+
+        This adds no parameters or checkpoint keys. At 224 square input the
+        ResNet18/34 map is (N, 512, 7, 7), with nominal input stride 32.
+        """
+        x = x.float() / 255.0
+        x = (x - self.mean) / self.std
+        for name in ("conv1", "bn1", "relu", "maxpool", "layer1", "layer2", "layer3", "layer4"):
+            x = getattr(self.model, name)(x)
+        return x
+
 
 class _CameraTransform(nn.Module):
     """train/eval switch shared by both camera transforms (follows nn.Module.train)."""

@@ -69,6 +69,10 @@ def camera_cfg(
     return CameraCfg(
         prim_path=prim_path,
         update_period=0.0,
+        # Camera pose is consumed by the SimDist collector for per-frame
+        # geometry diagnostics. IsaacLab otherwise only refreshes pose at
+        # reset, leaving mounted wrist-camera transforms stale as joints move.
+        update_latest_camera_pose=True,
         height=CAMERA_HEIGHT,
         width=CAMERA_WIDTH,
         data_types=["rgb", "distance_to_image_plane"],
